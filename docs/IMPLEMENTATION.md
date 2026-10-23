@@ -38,3 +38,7 @@ Compile and inspect native layouts. Do not execute cleanup, upgrades, process si
 ## Local Tend authorization
 
 The user requested avoiding repeated password prompts. Optional setup grants the active local desktop user access only to the root-owned Tend helper. It stores no password and leaves other administrator actions under their normal policy. The legacy full-maintenance launcher command was removed from the helper. The installer accepts root-group-writable root-owned directories, while rejecting writable executable files, world-writable paths, symlinks and untrusted ownership. Seven source-predicate cases passed for these installation boundaries.
+
+## Installed delivery
+
+The app, administrator helper and user worker were installed and their hashes matched the optimized release binaries. The installed helper's read-only authorization check succeeded without an authentication dialog. The installed UI launched successfully. Schedule, reminder and restart-hook hashes matched the pre-upgrade baseline. No cleanup, package update, tuning change or machine restart was performed during delivery. The user-specific optional authorization rule stores no password.
