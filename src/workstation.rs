@@ -15,6 +15,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 pub fn home() -> PathBuf {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return std::env::var_os("TEND_DEMO_HOME")
+            .map(PathBuf::from)
+            .expect("Documentation recording requires an isolated demo home");
+    }
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/nonexistent"))
@@ -814,6 +820,10 @@ pub fn processes(previous: &[Process], elapsed: f64) -> Vec<Process> {
     list
 }
 pub fn signal_process(p: &Process, force: bool) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Process signals are disabled in documentation recordings.".into());
+    }
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     if p.pid == std::process::id()
         || [

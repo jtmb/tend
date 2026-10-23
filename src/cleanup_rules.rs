@@ -196,6 +196,10 @@ pub fn preview(p: &Policy) -> Result<String, String> {
     Ok(text)
 }
 pub fn apply(p: &Policy) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Deletion is disabled in documentation recordings.".into());
+    }
     let mut text = String::new();
     let mut failed = false;
     for r in p.rules.iter().filter(|r| r.enabled) {

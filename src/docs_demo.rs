@@ -1,50 +1,105 @@
-//! Compile-only documentation renderer. Never included in default app builds.
-//! Records real GTK widgets on a separate virtual display. No system actions,
-//! log loads, policy saves, deletion, process signals or privileged calls.
+//! Optional documentation capture: real callbacks and isolated, labeled inputs.
 use adw::prelude::*;
 use gtk::{glib, Widget};
+use serde_json::{json, Value};
 use std::{fs, path::Path, time::Duration};
 
 fn descendants(root: &impl IsA<Widget>) -> Vec<Widget> {
-    let root = root.as_ref();
-    let mut result = vec![root.clone()];
-    let mut child = root.first_child();
+    let mut result = vec![root.as_ref().clone()];
+    let mut child = root.as_ref().first_child();
     while let Some(widget) = child {
         child = widget.next_sibling();
         result.extend(descendants(&widget));
     }
     result
 }
-
+fn action(
+    trace: &mut Vec<Value>,
+    frame: usize,
+    name: &str,
+    target: &impl IsA<Widget>,
+    outer: &gtk::Box,
+) {
+    let rect = target
+        .as_ref()
+        .compute_bounds(outer)
+        .expect("Mapped action target");
+    trace.push(json!({"frame":frame,"name":name,
+        "x":rect.x()+rect.width()/2.,"y":rect.y()+rect.height()/2.}));
+}
+fn button(root: &impl IsA<Widget>, name: &str) -> gtk::Button {
+    descendants(root)
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::Button>().ok())
+        .find(|b| {
+            b.label().as_deref() == Some(name)
+                || (b.has_css_class("nav-item")
+                    && descendants(b).iter().any(|w| {
+                        w.downcast_ref::<gtk::Label>()
+                            .map(|l| l.text() == name)
+                            .unwrap_or(false)
+                    }))
+        })
+        .unwrap_or_else(|| panic!("Missing demo action: {name}"))
+}
+fn click(
+    root: &impl IsA<Widget>,
+    outer: &gtk::Box,
+    trace: &mut Vec<Value>,
+    frame: usize,
+    name: &str,
+) {
+    let b = button(root, name);
+    assert!(b.is_sensitive(), "Demo action is still pending: {name}");
+    action(trace, frame, name, &b, outer);
+    b.emit_clicked();
+}
+fn page(stack: &gtk::Stack, name: &str) -> Widget {
+    stack.child_by_name(name).expect("Demo page exists")
+}
+fn bottom(stack: &gtk::Stack, name: &str) {
+    if let Some(scroll) = page(stack, name).downcast_ref::<gtk::ScrolledWindow>() {
+        let adjustment = scroll.vadjustment();
+        adjustment.set_value(adjustment.upper() - adjustment.page_size());
+    }
+}
+fn text(root: &impl IsA<Widget>) -> String {
+    descendants(root)
+        .iter()
+        .filter_map(|w| {
+            if let Some(l) = w.downcast_ref::<gtk::Label>() {
+                Some(l.text().to_string())
+            } else {
+                w.downcast_ref::<gtk::TextView>().map(|v| {
+                    let b = v.buffer();
+                    b.text(&b.start_iter(), &b.end_iter(), false).to_string()
+                })
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn dropdown(stack: &gtk::Stack, tooltip: &str) -> gtk::DropDown {
+    descendants(&page(stack, "system-logs"))
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::DropDown>().ok())
+        .find(|w| w.tooltip_text().as_deref() == Some(tooltip))
+        .expect("Demo filter exists")
+}
 fn performance(stack: &gtk::Stack) {
-    stack.set_visible_child_name("task-manager");
-    if let Some(page) = stack.child_by_name("task-manager") {
-        for widget in descendants(&page) {
-            if let Some(tabs) = widget.downcast_ref::<gtk::Stack>() {
-                if tabs.child_by_name("performance").is_some() {
-                    tabs.set_visible_child_name("performance");
-                }
+    for w in descendants(&page(stack, "task-manager")) {
+        if let Some(tabs) = w.downcast_ref::<gtk::Stack>() {
+            if tabs.child_by_name("performance").is_some() {
+                tabs.set_visible_child_name("performance");
             }
-            if let Some(speed) = widget.downcast_ref::<gtk::DropDown>() {
-                // Only update the in-memory sampling control; never save settings.
-                speed.set_selected(1);
-            }
+        }
+        if let Some(speed) = w.downcast_ref::<gtk::DropDown>() {
+            speed.set_selected(1);
         }
     }
 }
-
-fn resource(stack: &gtk::Stack, name: &str) {
-    if let Some(page) = stack.child_by_name("task-manager") {
-        for widget in descendants(&page) {
-            if let Some(row) = widget.downcast_ref::<gtk::ListBoxRow>() {
-                if row.widget_name() == name {
-                    if let Some(list) = row.parent().and_downcast::<gtk::ListBox>() {
-                        list.select_row(Some(row));
-                    }
-                }
-            }
-        }
-    }
+fn refresh(stack: &gtk::Stack) {
+    button(&page(stack, "task-manager"), "Refresh now").emit_clicked();
 }
 
 pub fn record(
@@ -55,90 +110,163 @@ pub fn record(
     directory: &str,
 ) {
     let directory = Path::new(directory).to_path_buf();
-    fs::create_dir_all(&directory).expect("Create documentation frame directory");
-    eprintln!("Starting native demo renderer");
+    let home = tend::workstation::home();
+    assert_eq!(
+        home.parent(),
+        directory.parent(),
+        "Only sibling fixture directories are supported"
+    );
+    assert!(
+        home.join("demo-journal.jsonl").is_file(),
+        "Prepare isolated inputs first"
+    );
+    fs::create_dir_all(&directory).expect("Create frame directory");
+    assert!(
+        fs::read_dir(&directory).unwrap().next().is_none(),
+        "Use a fresh frame directory"
+    );
+    win.set_default_size(1100, 720);
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+    stack.set_visible_child_name("task-manager");
     performance(stack);
     let (app, win, outer, stack) = (app.clone(), win.clone(), outer.clone(), stack.clone());
     let paint = gtk::WidgetPaintable::new(Some(&outer));
     let mut tick = 0usize;
-    // Warm up real counters for 24 seconds so the chart has useful history.
-    let warmup = 192;
+    let warmup = 128;
+    let mut trace = Vec::new();
+    let mut evidence = Vec::new();
     glib::timeout_add_local(Duration::from_millis(125), move || {
         tick += 1;
         if tick % 64 == 0 {
-            eprintln!(
-                "Demo tick {tick}: mapped={}, size={}x{}",
-                win.is_mapped(),
-                outer.width(),
-                outer.height()
-            );
+            eprintln!("Demo capture tick {tick}");
         }
         if tick < warmup {
             if tick == warmup - 8 {
                 stack.set_visible_child_name("overview");
             }
             if tick % 8 == 0 {
-                // Xvfb has no window manager/focus. Use the existing read-only
-                // refresh callback rather than changing normal focus policy.
-                if let Some(page) = stack.child_by_name("task-manager") {
-                    for widget in descendants(&page) {
-                        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
-                            if button.label().as_deref() == Some("Refresh now") {
-                                button.emit_clicked();
-                            }
-                        }
-                    }
-                }
+                refresh(&stack);
             }
             return glib::ControlFlow::Continue;
         }
         let frame = tick - warmup;
         match frame {
-            0 | 232 => stack.set_visible_child_name("overview"),
-            24 => performance(&stack),
-            64 => resource(&stack, "memory"),
-            88 => resource(&stack, "cpu"),
-            104 => stack.set_visible_child_name("cleanup"),
-            132 => {
-                if let Some(page) = stack.child_by_name("cleanup") {
-                    if let Some(scroll) = page.downcast_ref::<gtk::ScrolledWindow>() {
-                        let adjustment = scroll.vadjustment();
-                        adjustment.set_value(adjustment.upper() - adjustment.page_size());
+            0 | 280 => stack.set_visible_child_name("overview"),
+            16 => click(&outer, &outer, &mut trace, frame, "Open disk cleanup"),
+            32 => bottom(&stack, "cleanup"),
+            48 => click(
+                &page(&stack, "cleanup"),
+                &outer,
+                &mut trace,
+                frame,
+                "Preview cleanup",
+            ),
+            72 => {
+                let report = text(&page(&stack, "cleanup"));
+                assert!(
+                    report.contains("2 files") && report.contains("3.0 MiB"),
+                    "Preview did not produce the expected real file inventory: {report}"
+                );
+                evidence.push(json!({"frame":frame,"preview":report}));
+                // Show the actual eligible filenames in the native report view.
+                for w in descendants(&page(&stack, "cleanup")) {
+                    if let Some(view) = w.downcast_ref::<gtk::TextView>() {
+                        let buffer = view.buffer();
+                        let mut iter = buffer.end_iter();
+                        view.scroll_to_iter(&mut iter, 0.0, false, 0.0, 0.0);
                     }
                 }
             }
-            160 => stack.set_visible_child_name("system-logs"),
-            176 => {
-                if let Some(page) = stack.child_by_name("system-logs") {
-                    for widget in descendants(&page) {
-                        if let Some(dropdown) = widget.downcast_ref::<gtk::DropDown>() {
-                            match dropdown.tooltip_text().as_deref() {
-                                Some("Log source") => dropdown.set_selected(2),
-                                Some("Severity filter") => dropdown.set_selected(1),
-                                _ => (),
-                            }
+            112 => {
+                click(&outer, &outer, &mut trace, frame, "Task Manager");
+                performance(&stack);
+            }
+            144 => {
+                for w in descendants(&page(&stack, "task-manager")) {
+                    if let Some(row) = w.downcast_ref::<gtk::ListBoxRow>() {
+                        if row.widget_name() == "memory" {
+                            action(&mut trace, frame, "Memory", row, &outer);
+                            row.parent()
+                                .and_downcast::<gtk::ListBox>()
+                                .unwrap()
+                                .select_row(Some(row));
                         }
                     }
                 }
             }
-            200 => stack.set_visible_child_name("tuning"),
-            256 => {
+            160 => click(&outer, &outer, &mut trace, frame, "System logs"),
+            168 => click(
+                &page(&stack, "system-logs"),
+                &outer,
+                &mut trace,
+                frame,
+                "Load logs",
+            ),
+            192 => {
+                let result = text(&page(&stack, "system-logs"));
+                assert!(
+                    result.contains("6 matching events"),
+                    "Log load failed: {result}"
+                );
+                evidence.push(json!({"frame":frame,"loaded":6}));
+            }
+            200 => {
+                let filter = dropdown(&stack, "Severity filter");
+                action(&mut trace, frame, "Errors and critical", &filter, &outer);
+                filter.set_selected(1);
+            }
+            220 => {
+                assert!(text(&page(&stack, "system-logs")).contains("2 matching events"));
+                evidence.push(json!({"frame":frame,"errors":2}));
+            }
+            224 | 226 | 228 | 230 | 232 | 234 => {
+                for w in descendants(&page(&stack, "system-logs")) {
+                    if let Some(search) = w.downcast_ref::<gtk::SearchEntry>() {
+                        if frame == 224 {
+                            action(&mut trace, frame, "Search editor", search, &outer);
+                            search.grab_focus();
+                        }
+                        search.set_text(&"editor"[..((frame - 224) / 2 + 1)]);
+                    }
+                }
+            }
+            244 => {
+                assert!(text(&page(&stack, "system-logs")).contains("1 matching events"));
+                evidence.push(json!({"frame":frame,"searched":1}));
+            }
+            248 => {
+                for w in descendants(&page(&stack, "system-logs")) {
+                    if let Some(list) = w.downcast_ref::<gtk::ListBox>() {
+                        if let Some(row) = list.row_at_index(0) {
+                            action(&mut trace, frame, "Inspect event", &row, &outer);
+                            list.select_row(Some(&row));
+                        }
+                    }
+                }
+                bottom(&stack, "system-logs");
+            }
+            264 => {
+                assert!(text(&page(&stack, "system-logs")).contains("PID: 4100"));
+                evidence.push(json!({"frame":frame,"event_details":true}));
+            }
+            304 => {
+                fs::write(
+                    directory.parent().unwrap().join("actions.json"),
+                    serde_json::to_vec_pretty(&trace).unwrap(),
+                )
+                .unwrap();
+                fs::write(
+                    directory.parent().unwrap().join("evidence.json"),
+                    serde_json::to_vec_pretty(&evidence).unwrap(),
+                )
+                .unwrap();
                 app.quit();
                 return glib::ControlFlow::Break;
             }
             _ => (),
         }
-        if (24..104).contains(&frame) && frame % 8 == 0 {
-            if let Some(page) = stack.child_by_name("task-manager") {
-                for widget in descendants(&page) {
-                    if let Some(button) = widget.downcast_ref::<gtk::Button>() {
-                        if button.label().as_deref() == Some("Refresh now") {
-                            button.emit_clicked();
-                        }
-                    }
-                }
-            }
+        if (112..160).contains(&frame) && frame % 8 == 0 {
+            refresh(&stack);
         }
         let snapshot = gtk::Snapshot::new();
         paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
@@ -146,7 +274,9 @@ pub fn record(
             renderer
                 .render_texture(&node, None)
                 .save_to_png(directory.join(format!("{frame:04}.png")))
-                .expect("Save documentation frame");
+                .expect("Save native frame");
+        } else {
+            panic!("Native preview is not mapped");
         }
         glib::ControlFlow::Continue
     });

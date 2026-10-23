@@ -86,6 +86,10 @@ where
     });
 }
 fn privileged(action: &str, data: Option<String>) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Privileged actions are disabled in documentation recordings.".into());
+    }
     let mut child = Command::new("/usr/bin/pkexec")
         .args(["/usr/local/libexec/tend-admin", action])
         .stdin(Stdio::piped())

@@ -75,6 +75,20 @@ pub fn decode(line: &str) -> Option<Entry> {
     })
 }
 pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        // Public demo input, parsed with the normal journal decoder. Never read
+        // the user's journal/crash reports in a documentation recording.
+        let input = fs::read_to_string(crate::workstation::home().join("demo-journal.jsonl"))
+            .map_err(|e| e.to_string())?;
+        let entries: Vec<_> = input
+            .lines()
+            .filter_map(decode)
+            .filter(|e| source != 2 || e.crash)
+            .take(limit as usize)
+            .collect();
+        return serde_json::to_string(&entries).map_err(|e| e.to_string());
+    }
     let mut cmd = Command::new("/usr/bin/journalctl");
     cmd.args([
         "--quiet",
