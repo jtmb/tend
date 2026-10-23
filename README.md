@@ -100,7 +100,7 @@ An optional GitHub Actions template is provided in [`docs/github-actions-check.y
 pkexec /usr/bin/python3 "$PWD/scripts/uninstall.py"
 ```
 
-This removes Tend’s binaries, launcher, timer overrides, and settings, restores the original maintenance schedule and warning timers, and preserves maintenance reports. Unpin Tend from the dock afterward.
+This removes Tend’s binaries, launcher, timer overrides, and settings, restores the original maintenance schedule and warning timers, and preserves maintenance reports. Unpin Tend from the dock afterward. Uninstall Tend before removing or rolling back the underlying maintenance engine or reboot hook, so its timer overrides do not remain behind.
 
 ## License
 
