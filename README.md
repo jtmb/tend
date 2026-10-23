@@ -20,8 +20,10 @@
 | Rust and real GTK widgets. No embedded browser. Monitoring pauses in the background. | Inspect eligible files, set age limits and choose what gets cleaned. | No telemetry or advertising. Reports stay on your computer unless you share them. |
 
 <p align="center">
-  <img src="assets/overview.png" width="960" alt="Tend overview with grouped navigation, free disk space, readable maintenance dates and a system-health summary">
+  <a href="assets/demo.gif"><img src="assets/demo.gif" width="960" alt="Animated Tend walkthrough: overview, live CPU and memory graphs, cleanup categories and folder rules, log filters, and performance settings"></a>
 </p>
+
+<p align="center"><sub>A 32-second tour of the native app · live resource counters · no cleanup or settings changes performed.<br>Prefer still images? <a href="#screenshots">Browse the screenshot gallery.</a></sub></p>
 
 ## Features
 
@@ -100,6 +102,7 @@ The existing system maintenance schedule is separate and may include its own con
 
 - [User guide](docs/USER_GUIDE.md) — every page, cleanup policy, scheduling, permissions, recovery and uninstall.
 - [Implementation notes](docs/IMPLEMENTATION.md) — architecture, operation boundaries and delivery checks.
+- [Demo recording](docs/demo/README.md) — reproduce the native walkthrough without touching an installed session.
 - [Source](src/) — native UI, collectors, user worker and constrained system helper.
 - [Issues](https://github.com/jtmb/tend/issues) — bugs and feature requests. Review logs before posting; they can include private paths and application names.
 

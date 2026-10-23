@@ -1,4 +1,6 @@
 mod cleanup_ui;
+#[cfg(feature = "docs-demo")]
+mod docs_demo;
 mod log_reader;
 mod task_manager;
 mod workbench;
@@ -646,6 +648,11 @@ fn build(app: &adw::Application) {
     win.set_content(Some(&outer));
     win.present();
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
+    #[cfg(feature = "docs-demo")]
+    if let Ok(directory) = std::env::var("TEND_DEMO_DIR") {
+        docs_demo::record(app, &win, &outer, &stack, &directory);
+        return;
+    }
     if let Ok(path) = std::env::var("TEND_SCREENSHOT") {
         if let Ok(page) = std::env::var("TEND_SCREENSHOT_PAGE") {
             stack.set_visible_child_name(&page);
@@ -694,11 +701,15 @@ fn build(app: &adw::Application) {
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(ID)
-        .flags(if std::env::var_os("TEND_SCREENSHOT").is_some() {
-            gtk::gio::ApplicationFlags::NON_UNIQUE
-        } else {
-            gtk::gio::ApplicationFlags::FLAGS_NONE
-        })
+        .flags(
+            if std::env::var_os("TEND_SCREENSHOT").is_some()
+                || (cfg!(feature = "docs-demo") && std::env::var_os("TEND_DEMO_DIR").is_some())
+            {
+                gtk::gio::ApplicationFlags::NON_UNIQUE
+            } else {
+                gtk::gio::ApplicationFlags::FLAGS_NONE
+            },
+        )
         .build();
     let quit = gtk::gio::SimpleAction::new("quit", None);
     let weak = app.downgrade();
