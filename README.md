@@ -114,6 +114,18 @@ pkexec /usr/bin/python3 "$PWD/scripts/upgrade.py"
 
 Close and reopen Tend to use the new binary. Open it from the dock or application launcher.
 
+## Remember Tend authorization
+
+To let Tend’s supported system actions run without repeated password prompts for your active local desktop account:
+
+```sh
+pkexec /usr/bin/python3 "$PWD/scripts/upgrade.py" --remember-authorization
+```
+
+Ubuntu requires administrator authentication once to install this rule. No login password is stored. The rule grants only the installed, root-owned Tend helper permission; it does not authorize shells, Python scripts, arbitrary commands or other administrator applications. The helper has no command to launch the full maintenance service or its reboot hook.
+
+Remove `/etc/polkit-1/rules.d/49-tend-local-user.rules` as administrator to restore normal prompts, or uninstall Tend. Anyone controlling your unlocked desktop can use these Tend actions under this policy.
+
 ## Data and permissions
 
 | Location | Contents |

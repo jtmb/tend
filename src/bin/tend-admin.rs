@@ -235,8 +235,8 @@ fn execute() -> Result<(), String> {
             println!("Schedule and warning timers updated.");
             Ok(())
         }
-        Some("run") => run(&["start", "--no-block", "dev-maintenance.service"]),
-        _ => Err("Supported operations: apply, run, notify.".into()),
+        Some("authorization-check") => { println!("Tend helper authorization verified; no settings changed."); Ok(()) },
+        _ => Err("Supported operations: apply, cleanup, updates, memory, memory-restore, install-zram, docker-logs, authorization-check, notify.".into()),
     }
 }
 

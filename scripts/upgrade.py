@@ -2,6 +2,9 @@
 """Upgrade only Tend binaries/assets. Never touch timers, settings, or reboot hooks."""
 import hashlib
 import os
+import pwd
+import re
+import sys
 import shutil
 import stat
 import tempfile
@@ -27,7 +30,8 @@ for src, target in files.items():
     for parent in (path, *path.parents):
         if parent.exists() or parent.is_symlink():
             info = parent.lstat()
-            if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            root_group_directory = stat.S_ISDIR(info.st_mode) and info.st_gid == 0 and not info.st_mode & 0o002
+            if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or (info.st_mode & 0o022 and not root_group_directory):
                 raise SystemExit(f'Unprotected installation destination: {parent}')
 
 stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
@@ -64,3 +68,32 @@ except BaseException:
             os.replace(backups[path], path)
     raise
 print('Tend upgraded. Binaries verified. No timers, maintenance settings, or reboot hooks changed.')
+
+if '--remember-authorization' in sys.argv[1:]:
+    uid = int(os.environ.get('PKEXEC_UID', os.environ.get('SUDO_UID', '-1')))
+    if uid < 1000:
+        raise SystemExit('Run authorization setup through the desktop user.')
+    user = pwd.getpwuid(uid).pw_name
+    if not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]*', user):
+        raise SystemExit('Unsupported user name.')
+    rule = Path('/etc/polkit-1/rules.d/49-tend-local-user.rules')
+    body = '\n'.join([
+        '// Explicit local authorization for the installed Tend helper. No password is stored.',
+        'polkit.addRule(function(action, subject) {',
+        '    if (action.id === "io.github.jtmb.Tend.manage" &&',
+        '        action.lookup("program") === "/usr/local/libexec/tend-admin" &&',
+        '        subject.user === ' + __import__('json').dumps(user) + ' && subject.local && subject.active) {',
+        '        return polkit.Result.YES;',
+        '    }',
+        '});', ''
+    ])
+    if rule.exists():
+        shutil.copy2(rule, rule.with_name(rule.name + '.backup.' + stamp))
+    fd, temporary = tempfile.mkstemp(prefix='.tend-auth-', dir=rule.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(body); stream.flush(); os.fsync(stream.fileno()); os.fchmod(stream.fileno(), 0o644)
+        os.replace(temporary, rule)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    print('Tend authorization saved for ' + user + '. No password stored. Other administrator actions still require authentication.')
