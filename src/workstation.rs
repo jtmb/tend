@@ -927,3 +927,109 @@ pub fn run_with_input(program: &str, args: &[&str], input: &str) -> Result<Strin
         ))
     }
 }
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+    use std::os::unix::{ffi::OsStrExt, fs::symlink};
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let p = PathBuf::from("/tmp/opencode").join(format!(
+                "tend-boundary-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+        fn old_file(&self, relative: &str) -> PathBuf {
+            let path = self.0.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"preserve outside cache").unwrap();
+            let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+            let times = [libc::timespec {
+                tv_sec: (now() - 60 * 86400) as libc::time_t,
+                tv_nsec: 0,
+            }; 2];
+            assert_eq!(
+                unsafe { libc::utimensat(libc::AT_FDCWD, name.as_ptr(), times.as_ptr(), 0) },
+                0
+            );
+            path
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn cache_cleanup_rejects_replaced_parent_and_preserves_external_file() {
+        let t = Scratch::new();
+        let cache = t.0.join("cache");
+        fs::create_dir(&cache).unwrap();
+        let original = t.old_file("cache/sub/log");
+        let outside = t.old_file("outside/log");
+        assert!(old_files(&cache, 30).contains(&original));
+        fs::rename(cache.join("sub"), cache.join("original-sub")).unwrap();
+        symlink(t.0.join("outside"), cache.join("sub")).unwrap();
+        assert!(remove_old_file(&cache, &original, 30).is_err());
+        assert!(outside.exists());
+        assert!(cache.join("original-sub/log").exists());
+    }
+    #[test]
+    fn cleanup_removes_only_old_regular_files_inside_the_selected_root() {
+        let t = Scratch::new();
+        let root = t.0.join("cache");
+        let old = t.old_file("cache/old");
+        let external = t.old_file("outside/data");
+        let fresh = root.join("fresh");
+        fs::write(&fresh, b"new").unwrap();
+        symlink(&external, root.join("link")).unwrap();
+        assert_eq!(old_files(&root, 30), vec![old.clone()]);
+        assert!(!remove_old_file(&root, &fresh, 30).unwrap());
+        assert!(!remove_old_file(&root, &root.join("link"), 30).unwrap());
+        assert!(remove_old_file(&root, &external, 30).is_err());
+        assert!(remove_old_file(&root, &old, 30).unwrap());
+        assert!(fresh.exists() && external.exists());
+        assert!(!old.exists());
+    }
+    #[test]
+    fn scan_counts_hardlinks_once_and_does_not_follow_directory_links() {
+        let t = Scratch::new();
+        let data = t.old_file("scan/data");
+        let external = t.old_file("outside/secret");
+        fs::hard_link(&data, t.0.join("scan/duplicate")).unwrap();
+        symlink(external.parent().unwrap(), t.0.join("scan/link")).unwrap();
+        let result = scan(
+            &t.0.join("scan"),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+        )
+        .unwrap();
+        assert_eq!(result.files, 1);
+        assert_eq!(result.allocated, fs::metadata(data).unwrap().blocks() * 512);
+        assert_eq!(result.skipped, 1);
+        assert!(result
+            .largest
+            .iter()
+            .all(|f| f.path.starts_with(t.0.join("scan"))));
+    }
+    #[test]
+    fn scan_honors_cancellation_before_reading_contents() {
+        let t = Scratch::new();
+        t.old_file("scan/a");
+        let result = scan(
+            &t.0.join("scan"),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicU64::new(0)),
+        )
+        .unwrap();
+        assert!(result.cancelled);
+        assert_eq!(result.files, 0);
+    }
+}

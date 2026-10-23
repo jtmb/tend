@@ -325,3 +325,25 @@ impl MemorySettings {
         }
     }
 }
+
+#[cfg(test)]
+mod launcher_tests {
+    use super::*;
+    #[test]
+    fn editing_main_launcher_preserves_other_desktop_actions() {
+        let source="[Desktop Entry]\nName=Editor\nExec=code %U\nActions=NewWindow;\n[Desktop Action NewWindow]\nExec=code --new-window\n";
+        let changed = replace_key(source, "Exec", "code --ozone-platform=wayland %U");
+        assert_eq!(
+            desktop_value(&changed, "Exec").as_deref(),
+            Some("code --ozone-platform=wayland %U")
+        );
+        assert!(changed.contains("[Desktop Action NewWindow]\nExec=code --new-window\n"));
+    }
+    #[test]
+    fn startup_disable_is_written_only_to_the_main_entry() {
+        let source = "[Desktop Entry]\nName=Example\n[Desktop Action Other]\nHidden=false\n";
+        let changed = replace_key(source, "Hidden", "true");
+        assert_eq!(desktop_value(&changed, "Hidden").as_deref(), Some("true"));
+        assert!(changed.contains("[Desktop Action Other]\nHidden=false\n"));
+    }
+}
