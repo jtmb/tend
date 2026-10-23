@@ -2,7 +2,7 @@
 Type=Application
 Name=Tend
 GenericName=Workstation Maintenance
-Comment=A little care for your Ubuntu workstation
+Comment=Ubuntu maintenance settings
 Exec=/usr/local/bin/tend
 Icon=io.github.jtmb.Tend
 Terminal=false

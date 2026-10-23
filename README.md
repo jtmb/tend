@@ -1,25 +1,20 @@
-<p align="center"><img src="assets/banner.svg" alt="Tend — Small routines. More room to create." width="100%"></p>
-<p align="center">
-  <img src="https://img.shields.io/badge/Rust-native-bb8158?style=flat-square" alt="Built with Rust">
-  <img src="https://img.shields.io/badge/GTK-4-286052?style=flat-square" alt="GTK 4">
-  <img src="https://img.shields.io/badge/License-MIT-4e7966?style=flat-square" alt="MIT license">
-</p>
+# Tend
 
-**A quiet control panel for a development machine that takes care of itself.**
+Native Ubuntu maintenance settings, built with Rust and GTK 4.
 
 Tend brings Ubuntu workstation maintenance into a small native desktop app. Pick a time, choose your reminders, decide whether successful maintenance should restart the computer, and see what happened. Pin it to your dock and open it when you need it.
 
 <p align="center"><img src="assets/overview.png" alt="Tend overview: a native GNOME window with maintenance status, disk space, and the next scheduled run." width="960"></p>
 
-## Designed to stay out of the way
+## Features
 
-| Your day | Tend's part |
+| Setting | Function |
 | --- | --- |
-| Make room for work | See available disk space and the latest cleanup results. |
-| Choose a daily rhythm | Set a time in America/Toronto; daylight saving and missed-run catch-up are handled by systemd. |
-| Get a heads-up | Independently enable reminders 60, 30, and 15 minutes beforehand. |
-| Return to a familiar desktop | Keep the existing maintenance restart and app restoration policy, or turn automatic restarts off. |
-| Understand what happened | Read recent maintenance activity without opening a terminal. |
+| Storage | See available disk space and the latest cleanup results. |
+| Schedule | Set a time in America/Toronto; daylight saving and missed-run catch-up are handled by systemd. |
+| Notifications | Independently enable reminders 60, 30, and 15 minutes beforehand. |
+| Restart and restore | Keep the existing maintenance restart and app restoration policy, or turn automatic restarts off. |
+| Activity | Read recent maintenance activity without opening a terminal. |
 
 The app and its settings helper are written in Rust, using GTK 4 and libadwaita. There is no embedded browser, background app service, telemetry, or idle polling. Background maintenance belongs to systemd. Closing Tend ends the UI process.
 

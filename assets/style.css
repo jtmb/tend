@@ -1,10 +1,7 @@
 .app-root { background-color: @window_bg_color; color: @window_fg_color; }
 window { background: @window_bg_color; }
 .sidebar { background: alpha(@accent_bg_color,0.035); padding: 14px 6px; }
-.hero { background: #173f37; color: #f1f7ef; border-radius: 24px; padding: 30px; }
-.hero-title { font-size: 32px; font-weight: 800; letter-spacing: -1px; }
-.hero-subtitle { color: #b8d1c6; font-size: 15px; }
-.eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 2px; }
+.section-label { font-size: 12px; font-weight: 600; }
 .metric { font-size: 26px; font-weight: 750; }
 .metric-card { padding: 20px; border-radius: 18px; background: @card_bg_color; box-shadow: 0 1px 4px alpha(black,0.08); }
 .page-title { font-size: 25px; font-weight: 800; }

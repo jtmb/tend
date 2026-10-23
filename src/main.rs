@@ -192,9 +192,9 @@ fn refresh(
                         .unwrap_or("Your next maintenance report will appear here."),
                 );
                 status.set_text(if v["active"] == "active" {
-                    "AUTOMATIC CARE IS ON"
+                    "Scheduled maintenance enabled"
                 } else {
-                    "AUTOMATIC CARE IS OFF"
+                    "Scheduled maintenance disabled"
                 });
             }
             Err(e) => status.set_text(&e),
@@ -218,10 +218,7 @@ fn build(app: &adw::Application) {
     let outer = column(0);
     outer.add_css_class("app-root");
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new(
-        "Tend",
-        "A little care for your computer",
-    )));
+    header.set_title_widget(Some(&adw::WindowTitle::new("Tend", "Ubuntu maintenance")));
     outer.append(&header);
     let toast = adw::ToastOverlay::new();
     toast.set_vexpand(true);
@@ -240,36 +237,22 @@ fn build(app: &adw::Application) {
     layout.append(&sidebar);
     layout.append(&gtk::Separator::new(Orientation::Vertical));
     layout.append(&stack);
-    let home = page(
-        "Your workstation, cared for.",
-        "A calm place to keep Ubuntu ready for your next project.",
-    );
-    let hero = column(12);
-    hero.add_css_class("hero");
-    let badge = label("AUTOMATIC CARE", "eyebrow");
-    hero.append(&badge);
-    hero.append(&label(
-        "Small routines.\nMore room to create.",
-        "hero-title",
-    ));
-    hero.append(&label(
-        "Updates, thoughtful cleanup, and a familiar desktop when you return.",
-        "hero-subtitle",
-    ));
-    home.append(&hero);
+    let home = page("Maintenance", "Schedule, storage, and recent results.");
+    let badge = label("Loading maintenance status…", "body");
+    home.append(&badge);
     let metrics = gtk::Box::new(Orientation::Horizontal, 14);
     let free = label("—", "metric");
     let last = label("—", "metric");
-    for (heading, value) in [("SPACE AVAILABLE", &free), ("LAST MAINTENANCE", &last)] {
+    for (heading, value) in [("Free space", &free), ("Last maintenance", &last)] {
         let b = column(10);
         b.add_css_class("metric-card");
         b.set_hexpand(true);
-        b.append(&label(heading, "eyebrow"));
+        b.append(&label(heading, "section-label"));
         b.append(value);
         metrics.append(&b);
     }
     home.append(&metrics);
-    let group = adw::PreferencesGroup::builder().title("Next up").build();
+    let group = adw::PreferencesGroup::builder().title("Next run").build();
     let next = label("Reading your schedule…", "body");
     next.set_max_width_chars(40);
     row(
@@ -282,7 +265,7 @@ fn build(app: &adw::Application) {
     let phase = label("Loading…", "body");
     let phasebox = column(12);
     phasebox.add_css_class("metric-card");
-    phasebox.append(&label("THE LAST RUN", "eyebrow"));
+    phasebox.append(&label("Last run results", "section-label"));
     phasebox.append(&phase);
     home.append(&phasebox);
     let actions = gtk::Box::new(Orientation::Horizontal, 10);
@@ -293,11 +276,14 @@ fn build(app: &adw::Application) {
     actions.append(&refresh_button);
     home.append(&actions);
     home.reorder_child_after(&actions, Some(&group));
-    home.append(&label("Tend uses the existing system timers. Closing this window keeps maintenance scheduled and frees the app’s memory.","caption"));
+    home.append(&label(
+        "Closing Tend does not stop scheduled maintenance.",
+        "caption",
+    ));
     stack.add_titled(&scroll(&home), Some("overview"), "Overview");
     let settings = Settings::read();
     let schedule = page(
-        "Make it fit your day.",
+        "Schedule",
         "Changes take effect when you save. Ubuntu asks for administrator authentication.",
     );
     let loaded = settings.clone().unwrap_or_default();
@@ -305,7 +291,7 @@ fn build(app: &adw::Application) {
         schedule.append(&label(&format!("Could not read settings: {e}"), "error"));
     }
     let sg = adw::PreferencesGroup::builder()
-        .title("Daily rhythm")
+        .title("Maintenance schedule")
         .build();
     let enabled = toggle(
         &sg,
@@ -331,7 +317,7 @@ fn build(app: &adw::Application) {
     );
     schedule.append(&sg);
     let wg = adw::PreferencesGroup::builder()
-        .title("A heads-up")
+        .title("Notifications")
         .description(
             "Desktop notifications before scheduled maintenance. Missed warnings are skipped.",
         )
@@ -339,19 +325,19 @@ fn build(app: &adw::Application) {
     let w60 = toggle(
         &wg,
         "One hour before",
-        "Time to plan around a maintenance run",
+        "Notify 60 minutes before maintenance",
         loaded.warnings[0],
     );
     let w30 = toggle(
         &wg,
         "Thirty minutes before",
-        "A reminder to wrap up",
+        "Notify 30 minutes before maintenance",
         loaded.warnings[1],
     );
     let w15 = toggle(
         &wg,
         "Fifteen minutes before",
-        "A final scheduled reminder",
+        "Notify 15 minutes before maintenance",
         loaded.warnings[2],
     );
     schedule.append(&wg);
@@ -406,8 +392,8 @@ fn build(app: &adw::Application) {
     });
     stack.add_titled(&scroll(&schedule), Some("schedule"), "Schedule");
     let care = page(
-        "Care with boundaries.",
-        "The maintenance engine keeps useful development data in place.",
+        "Cleanup & appearance",
+        "Cleanup rules and display preferences.",
     );
     let cg = adw::PreferencesGroup::builder()
         .title("Cleanup policy")
@@ -440,13 +426,10 @@ fn build(app: &adw::Application) {
     });
     row(&appearance, "Color scheme", "Saved for this app", &theme);
     care.append(&appearance);
-    care.append(&label(
-        "Tend 0.1 · Rust + GTK 4 + libadwaita\nNo webview. No background agent. No telemetry.",
-        "caption",
-    ));
-    stack.add_titled(&scroll(&care), Some("care"), "Care & appearance");
+    care.append(&label("Tend 0.1", "caption"));
+    stack.add_titled(&scroll(&care), Some("care"), "Cleanup & appearance");
     let logs = page(
-        "See what happened.",
+        "Activity",
         "The latest maintenance journal, loaded only when requested.",
     );
     let load = gtk::Button::with_label("Load recent activity");
