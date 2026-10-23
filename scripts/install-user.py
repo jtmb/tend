@@ -15,12 +15,13 @@ root = Path(__file__).resolve().parents[1]
 home = Path(pwd.getpwuid(os.getuid()).pw_dir)
 source = root / 'target/release/tend'
 helper = Path('/usr/local/libexec/tend-admin')
-if not source.is_file():
-    raise SystemExit('Build first: cargo build --release --locked -j 1 --bin tend')
+if not source.is_file() or not (root/'target/release/tend-worker').is_file():
+    raise SystemExit('Build first: cargo build --release --locked -j 1 --bin tend --bin tend-worker')
 if not helper.is_file() or not os.access(helper, os.X_OK) or helper.stat().st_uid != 0 or helper.stat().st_mode & 0o022:
     raise SystemExit('The existing trusted Tend helper is required. No authentication prompt was opened.')
 files = {
     home / 'scripts/tend': (source.read_bytes(), 0o755),
+    home / 'scripts/tend-worker': ((root/'target/release/tend-worker').read_bytes(), 0o755),
     home / '.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg': ((root/'assets/io.github.jtmb.Tend.svg').read_bytes(), 0o644),
 }
 binary = home / 'scripts/tend'

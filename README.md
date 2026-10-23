@@ -2,7 +2,7 @@
 
 **Native Ubuntu storage, monitoring and performance settings.** Written in Rust with GTK 4 and libadwaita.
 
-Scan disk usage, preview cleanup, inspect resource pressure, manage startup entries and adjust supported desktop and memory settings. Open Tend from the dock when you need it. No embedded browser, telemetry, advertising or resident Tend daemon.
+Scan disk usage, preview cleanup, inspect resource pressure, manage startup entries and adjust supported desktop and memory settings. Open Tend from the dock when you need it. No embedded browser, telemetry or advertising. Closing the window keeps Tend in the dock; monitoring pauses in the background. Quit explicitly from the header menu or dock action.
 
 ![Tend overview](assets/overview.png)
 
@@ -12,7 +12,9 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 | --- | --- |
 | **Overview** | Free disk space, CPU/memory/swap snapshot, maintenance status and recent results. |
 | **Storage** | Cancellable folder scans; allocated size, largest files, and development directories; open locations in Files. |
-| **Disk cleanup** | Category selection, preview, age/cache allowances, execution results and free-space change. |
+| **Disk cleanup** | Category selection, preview, cache allowances, editable folder rules with filename patterns and minimum ages, execution results and free-space change. |
+| **Cleanup scheduling** | Daily, weekly or numeric five-field user cron schedules; optional missed-run catch-up, saved policy and last result. Disabled until enabled and saved. |
+| **System logs** | System/user journals and recent crashed apps; time, severity and text filters; selected-event details and local export. |
 | **Task Manager** | Windows 11–inspired Processes and Performance views: live searchable/sortable process table; CPU, memory, per-disk and per-adapter graphs; available GPU counters; process controls, update speed and snapshot export. |
 | **Startup & services** | Login application overrides, optional local user-service enablement, boot timing and last session-restoration report. |
 | **Performance settings** | Desktop animations, Ubuntu display controls, ChatGPT/VS Code Wayland launchers, swappiness and zram configuration. |
@@ -46,10 +48,10 @@ Performance shows CPU, memory, physical-disk active time and read/write rates, a
 ## Low overhead
 
 - No folder scans, Docker queries or package refreshes at startup.
-- Task Manager samples every two seconds by default **only while its page is selected**, with pause/1/2/5-second controls. Resource graphs retain 60 samples in memory. Closing the window stops sampling.
+- Task Manager samples every two seconds by default **only while its page is selected and Tend is focused**, with pause/1/2/5-second controls. Resource graphs retain 60 samples in memory. Closing or minimizing the window stops sampling. Returning to Tend resumes it.
 - Process tables use native GTK list virtualization and sortable columns. Collection runs on a worker thread without overlapping samples. Expensive reports refresh on request. Scans run on a lower-priority worker thread with progress and cancellation.
 - Scans skip symlinks and other filesystems, count allocated blocks once per inode, and report incomplete results if cancelled or their safety limits are reached.
-- Tend uses systemd for the existing scheduled maintenance. Upgrading Tend does not create a new timer or change that schedule.
+- Tend uses systemd for existing scheduled maintenance. Optional cleanup cron jobs run the user worker without keeping the UI open. Upgrading Tend does not enable them or change the existing maintenance schedule.
 
 The interface can report pressure and compare saved observations; it does not claim a tuning change has improved a workload merely because a number changed.
 
@@ -74,6 +76,31 @@ Docker’s inventory is not an exact deletion estimate: the daemon decides unuse
 Manual cleanup preferences are saved independently from the **existing daily maintenance policy** shown under Appearance. Ubuntu’s existing temporary-file cleanup, journal limits, log rotation, Snap maintenance and SSD trimming remain in place.
 
 Implementation follows the separate [Docker build-cache pruning](https://docs.docker.com/reference/cli/docker/builder/prune/) and [image pruning](https://docs.docker.com/reference/cli/docker/image/prune/) controls. User-file cleanup runs as the desktop user, with directory-descriptor checks to avoid following replacement symlinks.
+
+<details>
+<summary>System log reader</summary>
+
+![System log reader](assets/system-logs.png)
+
+</details>
+
+## Additional cleanup rules and cron
+
+Disk cleanup includes **Add rule**, **Edit selected** and **Remove selected**. Choose a specific folder, comma-separated filename patterns (`*.log,*.tmp`), minimum age and optional recursion. Cache presets cover Firefox, Chrome, Mesa shaders, uv and npm downloads. Symlinks, other filesystems, credential/configuration folders, repositories and dependency directories are excluded. Only old regular files owned by your user are eligible; directories are retained. Rules apply to the preview and manual cleanup, and are saved separately from the root maintenance policy.
+
+**Cleanup scheduling** supports daily/weekly controls or a numeric five-field cron expression in the system timezone. It runs the saved user cleanup categories and enabled folder rules. APT remains handled by existing system maintenance. Enabling a schedule authorizes automatic deletion under that saved policy, including Trash if selected. Review the preview first.
+
+Optional catch-up checks every 15 minutes and at startup, with a 20-minute boot grace period. Only the latest due occurrence runs after downtime; successful occurrences are deduplicated and failures receive at most three attempts per occurrence. A shared user lock prevents overlapping Tend cleanup jobs. Runs defer while the existing system maintenance service is active. Existing unrelated crontab entries are preserved. Disable and save to remove only Tend’s marked block. These jobs never run updates or request a reboot.
+
+## System logs and crashes
+
+Open **System logs** and click **Load logs**, or **Last crashed apps** for the past seven days. Choose the system journal, your application journal or recent crashes; filter by boot/hour/day/week, severity, or application/service/PID/message text. Selecting an event shows readable details. Export saves the filtered records locally.
+
+The reader fetches up to 1,000 recent records on demand, displays up to 500 matching rows and has no background polling. Crash detection uses structured systemd coredump events and readable Ubuntu Apport report headers. Crash memory dumps and environment fields are excluded from the displayed/exported Apport headers. Logs are never uploaded, and collection never requests administrator access. Protected/rotated records can be absent; recent crashes is not a complete historical inventory.
+
+## Dock behavior
+
+**Appearance → Close to dock** is enabled by default. Closing minimizes the existing window and keeps its dock identity. Open the dock icon to return. Resource sampling stops while minimized or unfocused; expensive reports remain on demand. Choose **Quit Tend** from the header menu or the dock’s explicit action to exit fully. Disable Close to dock to restore exit-on-close behavior. No login background service is added.
 
 ## Tuning and recovery
 
@@ -110,11 +137,11 @@ cd tend
 ./scripts/install.sh
 ```
 
-The build uses one job at a time. Regular installation and updates replace only the interface under `~/scripts/tend`, its user desktop launcher and its user icon. **They do not invoke sudo or pkexec and do not open password dialogs.** The dock keeps the same application identity. Backups of replaced user files are kept beside them.
+The build uses one job at a time. Regular installation and updates replace the interface under `~/scripts/tend`, the user cleanup worker under `~/scripts/tend-worker`, the user desktop launcher and the user icon. **They do not invoke sudo or pkexec and do not open password dialogs.** The dock keeps the same application identity. Backups of replaced user files are kept beside them.
 
 The trusted system helper must already be installed. If it is missing, the installer stops with an explanation instead of opening an authentication prompt. A first-time administrator setup for the existing maintenance deployment can be performed explicitly with `pkexec /usr/bin/python3 "$PWD/scripts/install.py"`; this is separate from routine interface updates. Helper changes also require an explicit administrator-managed upgrade, and are never automatically attempted by the user installer.
 
-Close and reopen Tend to use an interface update. Open it from the dock or application launcher.
+Choose Quit Tend, then reopen Tend to use an interface update. Open it from the dock or application launcher.
 
 ## Remember Tend authorization
 
@@ -158,6 +185,8 @@ cargo build --release --locked -j 1
 | `src/workbench.rs` | Storage, tuning and recovery pages. |
 | `src/task_manager.rs` | Native Task Manager tables, controls and resource graphs. |
 | `src/task_stats.rs` | Read-only process, disk, network and GPU counters. |
+| `src/cleanup_rules.rs` / `src/cleanup_ui.rs` | Folder rules, user cron scheduling and cleanup controls. |
+| `src/system_logs.rs` / `src/log_reader.rs` | Bounded journal/crash collection and native log filters. |
 | `src/workstation.rs` | Scans, reports, cache operations and process counters. |
 | `src/preferences.rs` | User preferences, startup entries, launcher overrides and recovery. |
 | `src/bin/tend-admin.rs` | Constrained privileged operations. |
@@ -173,7 +202,7 @@ Use Recovery first if you also want to undo tuning changes. The uninstaller pres
 pkexec /usr/bin/python3 "$PWD/scripts/uninstall.py"
 ```
 
-Remove the user interface first with `rm -- "$HOME/scripts/tend" "$HOME/.local/share/applications/io.github.jtmb.Tend.desktop" "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg"`. The administrator uninstall then restores the original maintenance integration and schedules. Unpin Tend from the dock afterward.
+Disable and save the cleanup schedule in the UI first to remove Tend’s cron block. Remove the user interface first with `rm -- "$HOME/scripts/tend" "$HOME/scripts/tend-worker" "$HOME/.local/share/applications/io.github.jtmb.Tend.desktop" "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg"`. The administrator uninstall then restores the original maintenance integration and schedules. Unpin Tend from the dock afterward.
 
 ## License
 

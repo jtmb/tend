@@ -12,7 +12,7 @@ Goal: deliver the approved storage, monitoring, tuning and recovery tools in a l
 ## Operation boundaries
 
 - No scan runs automatically when Tend opens. Full scans require an explicit action and can be cancelled.
-- Monitoring samples only while its page is selected, without a new service.
+- Monitoring samples only while its page is selected and Tend is focused, without a new service.
 - Cache previews are advisory snapshots; Docker determines unused eligibility at execution. Trash is an explicit all-items operation.
 - Cleanup preferences govern the manual action. The existing daily maintenance policy remains independent and is displayed separately.
 - User-file cleanup runs as the desktop user. Privileged operations accept typed settings and fixed commands. Cleanup and updates share the maintenance lock.
@@ -49,4 +49,18 @@ Replaces the original monitor/process pages with a native two-tab Task Manager. 
 
 ## Password prompt correction
 
-Routine updates now use `scripts/install-user.py`: the UI lives at `~/scripts/tend`, and a per-user desktop launcher overrides the system launcher under the same dock identity. `scripts/install.sh` builds only the interface and never invokes pkexec/sudo. The already-installed root helper and its scoped authorization remain separate. Missing helper prerequisites produce an error, not an automatic authentication prompt. This prevents repeated interface-install prompts without storing a login password or granting an editable installer general administrator access.
+Routine updates now use `scripts/install-user.py`: the UI lives at `~/scripts/tend`, and a per-user desktop launcher overrides the system launcher under the same dock identity. `scripts/install.sh` builds the interface and user worker and never invokes pkexec/sudo. The already-installed root helper and its scoped authorization remain separate. Missing helper prerequisites produce an error, not an automatic authentication prompt. This prevents repeated interface-install prompts without storing a login password or granting an editable installer general administrator access.
+
+## Cleanup rules, cron, dock and logs — 2026-10-23
+
+- Separate typed folder-rule policy avoids changing the strict schema consumed by the already-installed privileged helper. Filename matching, age, ownership, protected paths, project ancestry, same-filesystem traversal and descriptor-based deletion constrain custom cleanup. Existing fixtures exercise the shared deletion boundary.
+- User cron manages only a marked block. Validation accepts numeric five-field expressions, with conventional day-of-month/day-of-week matching. A user lock serializes schedule edits/manual cleanup/scheduled cleanup. Persistent latest-occurrence state bounds retries and prevents replay of completed runs. Catch-up polls every 15 minutes and at boot; a 20-minute startup grace applies. New schedules remain disabled until explicitly enabled and saved. Existing root maintenance integration is untouched.
+- Close-to-dock minimizes the retained native window. Explicit Show/Hide/Quit application actions and a desktop Quit action provide recovery and exit. Resource collection pauses off-page or without focus and resumes on return. No additional daemon or login service is installed.
+- Log reader fetches limited journal fields and at most 1,000 records on demand. Crash mode also reads up to 256 KiB of selected headers per readable Apport report, excluding symlinks and crash memory/environment. Filters are local; exports are explicit. Neither collection nor filtering requests root access.
+- Delivery uses the user-only installer for the interface and worker. No root configuration, existing cron jobs or reboot policy is changed; no cleanup is executed on real user data.
+
+### Verification of the additions
+
+All 16 library checks passed, including cron field validation, managed-block preservation, structured crash identification and the existing descriptor-based cleanup boundaries. Native System logs, Cleanup scheduling and Disk cleanup layouts rendered successfully. A read-only integration check exercised current system/user/crash journals, bounded newest-first decoding, latest-due catch-up, protected roots and exclusive cleanup locking. No real cleanup or package update was performed.
+
+The optimized UI and user worker were installed with matching release hashes, without sudo or pkexec. The installed application retained its process after its Close-to-dock action and accepted Show. The explicit installed desktop Quit action exited it successfully; the current UI was then reopened. Existing maintenance/restart configuration hashes and unrelated user cron jobs were preserved. The new user cleanup schedule remains disabled.

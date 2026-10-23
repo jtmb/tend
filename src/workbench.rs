@@ -134,6 +134,8 @@ fn choose_folder(win: &adw::ApplicationWindow, entry: &gtk::Entry) {
 pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     storage(stack, win);
     cleanup(stack, win);
+    crate::cleanup_ui::schedule_page(stack);
+    crate::log_reader::add(stack, win);
     crate::task_manager::add(stack, win);
     startup(stack, win);
     tuning(stack, win);
@@ -381,6 +383,17 @@ fn cleanup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .set_text("Preview is required. Cleanup does not install updates or restart the computer.");
     exports(&p, &view);
     let approved = Rc::new(RefCell::new(None::<String>));
+    let changed: Rc<dyn Fn()> = Rc::new({
+        let apply = apply.clone();
+        let approved = approved.clone();
+        move || {
+            apply.set_sensitive(false);
+            approved.borrow_mut().take();
+        }
+    });
+    let extra = crate::cleanup_ui::section(win, changed);
+    p.append(&extra);
+    p.reorder_child_after(&extra, Some(&policy));
     for c in &widgets.checks {
         let a = apply.clone();
         let plan = approved.clone();
@@ -414,7 +427,6 @@ fn cleanup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     );
     preview.connect_clicked(move |b| {
         let config = widgets_p.value();
-        let encoded = serde_json::to_string(&config).unwrap();
         b.set_sensitive(false);
         apply_p.set_sensitive(false);
         widgets_p.sensitive(false);
@@ -427,14 +439,27 @@ fn cleanup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         );
         v.buffer().set_text("Checking selected categories…");
         job(
-            move || w::cleanup_preview(&config),
+            move || {
+                let rules = tend::cleanup_rules::Policy::load()?;
+                let preview = format!(
+                    "{}\n{}",
+                    w::cleanup_preview(&config)?,
+                    tend::cleanup_rules::preview(&rules)?
+                );
+                Ok(
+                    serde_json::json!({"preview":preview,"config":config,"rules":rules})
+                        .to_string(),
+                )
+            },
             move |r| {
                 b.set_sensitive(true);
                 w.sensitive(true);
                 match r {
                     Ok(s) => {
-                        v.buffer().set_text(&s);
-                        *plan.borrow_mut() = Some(encoded);
+                        let result: serde_json::Value = serde_json::from_str(&s).unwrap();
+                        v.buffer()
+                            .set_text(result["preview"].as_str().unwrap_or("Preview unavailable"));
+                        *plan.borrow_mut() = Some(s);
                         a.set_sensitive(true);
                     }
                     Err(e) => v.buffer().set_text(&e),
@@ -443,7 +468,7 @@ fn cleanup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         );
     });
     let parent = win.clone();
-    apply.connect_clicked(move|b|{let Some(json)=approved.borrow().clone()else{return};let (b,v,preview,widgets,approved)=(b.clone(),view.clone(),preview.clone(),widgets.clone(),approved.clone());confirm(&parent,"Delete the selected cache and Trash contents?","This permanently removes the categories shown in your preview. Docker eligibility is rechecked at execution. No updates or restart will run.","Clean selected",true,move||{b.set_sensitive(false);preview.set_sensitive(false);widgets.sensitive(false);approved.borrow_mut().take();v.buffer().set_text("Cleaning selected categories… Ubuntu may ask for administrator authentication.");let (b,v,preview,widgets)=(b.clone(),v.clone(),preview.clone(),widgets.clone());let json=json.clone();job(move||privileged("cleanup",Some(json)),move|r|{b.set_sensitive(false);preview.set_sensitive(true);widgets.sensitive(true);let text=r.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}"));let _=w::record("cleanup-result",&text);v.buffer().set_text(&text);});});});
+    apply.connect_clicked(move|b|{let Some(json)=approved.borrow().clone()else{return};let (b,v,preview,widgets,approved)=(b.clone(),view.clone(),preview.clone(),widgets.clone(),approved.clone());confirm(&parent,"Delete the selected cache and Trash contents?","This permanently removes the categories shown in your preview. Docker eligibility is rechecked at execution. No updates or restart will run.","Clean selected",true,move||{b.set_sensitive(false);preview.set_sensitive(false);widgets.sensitive(false);approved.borrow_mut().take();v.buffer().set_text("Cleaning selected categories…");let (b,v,preview,widgets)=(b.clone(),v.clone(),preview.clone(),widgets.clone());let json=json.clone();job(move||{let _guard=tend::cleanup_rules::cleanup_lock()?;let plan:serde_json::Value=serde_json::from_str(&json).map_err(|e|e.to_string())?;let rules:tend::cleanup_rules::Policy=serde_json::from_value(plan["rules"].clone()).map_err(|e|e.to_string())?;let base=privileged("cleanup",Some(plan["config"].to_string()))?;match tend::cleanup_rules::apply(&rules){Ok(extra)=>Ok(format!("{base}\n{extra}")),Err(e)=>Err(format!("{base}\nAdditional rule failures:\n{e}"))}},move|r|{b.set_sensitive(false);preview.set_sensitive(true);widgets.sensitive(true);let text=r.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}"));let _=w::record("cleanup-result",&text);v.buffer().set_text(&text);});});});
     stack.add_titled(&scroll(&p), Some("cleanup"), "Disk cleanup");
 }
 fn startup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {

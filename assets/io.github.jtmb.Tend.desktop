@@ -9,3 +9,9 @@ Terminal=false
 Categories=System;Settings;
 StartupNotify=true
 StartupWMClass=io.github.jtmb.Tend
+
+Actions=Quit;
+
+[Desktop Action Quit]
+Name=Quit Tend
+Exec=/usr/bin/gdbus call --session --dest io.github.jtmb.Tend --object-path /io/github/jtmb/Tend --method org.gtk.Actions.Activate quit [] {}

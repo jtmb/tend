@@ -1,3 +1,5 @@
+mod cleanup_ui;
+mod log_reader;
 mod task_manager;
 mod workbench;
 use adw::prelude::*;
@@ -224,6 +226,14 @@ fn build(app: &adw::Application) {
     let outer = column(0);
     outer.add_css_class("app-root");
     let header = adw::HeaderBar::new();
+    let menu = gtk::gio::Menu::new();
+    menu.append(Some("Show Tend"), Some("app.show"));
+    menu.append(Some("Quit Tend"), Some("app.quit"));
+    let menu_button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .menu_model(&menu)
+        .build();
+    header.pack_start(&menu_button);
     header.set_title_widget(Some(&adw::WindowTitle::new("Tend", "System tools")));
     outer.append(&header);
     let toast = adw::ToastOverlay::new();
@@ -236,6 +246,9 @@ fn build(app: &adw::Application) {
         .hexpand(true)
         .vexpand(true)
         .build();
+    if std::env::var_os("TEND_SCREENSHOT").is_some() {
+        stack.set_transition_type(gtk::StackTransitionType::None);
+    }
     let sidebar = gtk::StackSidebar::new();
     sidebar.set_stack(&stack);
     sidebar.set_size_request(170, -1);
@@ -440,6 +453,19 @@ fn build(app: &adw::Application) {
         let _ = fs::write(&pref, w.selected().to_string());
     });
     row(&appearance, "Color scheme", "Saved for this app", &theme);
+    let background_path = glib::user_config_dir().join("tend/background");
+    let background = toggle(
+        &appearance,
+        "Close to dock",
+        "Keep Tend running when its window closes; live monitoring pauses while minimized",
+        fs::read_to_string(&background_path).ok().as_deref() != Some("false"),
+    );
+    background.connect_active_notify(move |b| {
+        let _ = tend::workstation::private_write(
+            &background_path,
+            if b.is_active() { "true" } else { "false" },
+        );
+    });
     care.append(&appearance);
     care.append(&label("Tend 0.2", "caption"));
     stack.add_titled(&scroll(&care), Some("care"), "Appearance");
@@ -498,6 +524,18 @@ fn build(app: &adw::Application) {
     refresh_button.connect_clicked(move |button| refresh(&n, &f, &l, &p, &b, button));
     let cleanup_stack = stack.clone();
     run.connect_clicked(move |_| cleanup_stack.set_visible_child_name("cleanup"));
+    win.connect_close_request(|w| {
+        let keep = fs::read_to_string(glib::user_config_dir().join("tend/background"))
+            .ok()
+            .as_deref()
+            != Some("false");
+        if keep && std::env::var_os("TEND_SCREENSHOT").is_none() {
+            w.minimize();
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
     win.set_content(Some(&outer));
     win.present();
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
@@ -517,7 +555,7 @@ fn build(app: &adw::Application) {
                 } else {
                     6
                 })
-                || stack.is_transition_running()
+                || (stack.is_transition_running() && attempts < 40)
             {
                 return glib::ControlFlow::Continue;
             }
@@ -555,8 +593,34 @@ fn main() -> glib::ExitCode {
             gtk::gio::ApplicationFlags::FLAGS_NONE
         })
         .build();
+    let quit = gtk::gio::SimpleAction::new("quit", None);
+    let weak = app.downgrade();
+    quit.connect_activate(move |_, _| {
+        if let Some(a) = weak.upgrade() {
+            a.quit();
+        }
+    });
+    app.add_action(&quit);
+    for action in ["show", "hide"] {
+        let a = gtk::gio::SimpleAction::new(action, None);
+        let weak = app.downgrade();
+        a.connect_activate(move |_, _| {
+            if let Some(app) = weak.upgrade() {
+                if let Some(w) = app.windows().first() {
+                    if action == "hide" {
+                        w.close();
+                    } else {
+                        w.unminimize();
+                        w.present();
+                    }
+                }
+            }
+        });
+        app.add_action(&a);
+    }
     app.connect_activate(|app| {
-        if let Some(window) = app.active_window() {
+        if let Some(window) = app.windows().first() {
+            window.unminimize();
             window.present();
         } else {
             build(app);

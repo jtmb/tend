@@ -366,7 +366,7 @@ pub fn cleanup_preview(c: &Cleanup) -> Result<String, String> {
     Ok(s)
 }
 // Directory descriptors prevent following a parent that is swapped to a symlink.
-fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<bool, String> {
+pub(crate) fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<bool, String> {
     use std::{
         ffi::CString,
         os::{
@@ -441,6 +441,14 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     if output("/usr/bin/id", &["-u"])? == "0" {
         return Err("User cleanup cannot run as root".into());
     }
+    let failed = std::cell::Cell::new(false);
+    let run_cleanup = |p: &str, args: &[&str]| match crate::output(p, args) {
+        Ok(s) => s,
+        Err(e) => {
+            failed.set(true);
+            format!("Failed: {e}")
+        }
+    };
     let before = available();
     let mut log = String::new();
     let hours = format!("until={}h", c.age_days * 24);
@@ -448,7 +456,7 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     if c.docker_build {
         log.push_str(&format!(
             "Docker build cache:\n{}\n",
-            command(
+            run_cleanup(
                 "/usr/bin/docker",
                 &[
                     "builder",
@@ -466,7 +474,7 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     if c.docker_images {
         log.push_str(&format!(
             "Docker dangling images:\n{}\n",
-            command(
+            run_cleanup(
                 "/usr/bin/docker",
                 &["image", "prune", "--force", "--filter", &hours]
             )
@@ -482,6 +490,9 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
                 Err(_) => failures += 1,
             }
         }
+        if failures > 0 {
+            failed.set(true);
+        }
         log.push_str(&format!(
             "{title}: removed {count} files; {failures} failures\n"
         ));
@@ -489,7 +500,7 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     if c.pip {
         log.push_str(&format!(
             "Pip cache:\n{}\n",
-            command(
+            run_cleanup(
                 "/usr/bin/python3",
                 &[
                     "-m",
@@ -505,12 +516,16 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     if c.trash {
         log.push_str(&format!(
             "Trash:\n{}\n",
-            command("/usr/bin/gio", &["trash", "--empty"])
+            run_cleanup("/usr/bin/gio", &["trash", "--empty"])
         ));
     }
     log.push_str(&format!("\nRoot free space before: {}\nAfter: {}\nChange: {:.1} MiB (includes concurrent disk activity)\n",bytes(before),bytes(available()),(available() as i128-before as i128) as f64/1048576.));
     record("cleanup", &log)?;
-    Ok(log)
+    if failed.get() {
+        Err(log)
+    } else {
+        Ok(log)
+    }
 }
 #[derive(Clone, Default, Serialize)]
 pub struct Sample {

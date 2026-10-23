@@ -676,6 +676,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         glib::Propagation::Proceed
     });
     let start: Rc<dyn Fn()> = Rc::new({
+        let window = win.downgrade();
         let stack = stack.downgrade();
         let speed = speed.downgrade();
         let data = state.clone();
@@ -686,7 +687,15 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             let (Some(stack), Some(speed)) = (stack.upgrade(), speed.upgrade()) else {
                 return;
             };
-            if stack.visible_child_name().as_deref() != Some("task-manager") {
+            let minimized = window
+                .upgrade()
+                .and_then(|w| w.surface())
+                .and_then(|s| s.downcast::<gtk::gdk::Toplevel>().ok())
+                .map(|s| s.state().contains(gtk::gdk::ToplevelState::MINIMIZED))
+                .unwrap_or(false);
+            let active = window.upgrade().map(|w| w.is_active()).unwrap_or(false);
+            if !active || minimized || stack.visible_child_name().as_deref() != Some("task-manager")
+            {
                 data.borrow_mut().previous = None;
                 return;
             }
@@ -707,6 +716,18 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             ));
         }
     });
+    let state_start = start.clone();
+    win.connect_realize(move |w| {
+        if let Some(surface) = w
+            .surface()
+            .and_then(|s| s.downcast::<gtk::gdk::Toplevel>().ok())
+        {
+            let on_state = state_start.clone();
+            surface.connect_state_notify(move |_| on_state());
+        }
+    });
+    let focused = start.clone();
+    win.connect_is_active_notify(move |_| focused());
     let on_page = start.clone();
     stack.connect_visible_child_name_notify(move |_| on_page());
     speed.connect_selected_notify(move |_| start());
