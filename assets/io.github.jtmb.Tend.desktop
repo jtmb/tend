@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tend
+GenericName=Workstation Maintenance
+Comment=A little care for your Ubuntu workstation
+Exec=/usr/local/bin/tend
+Icon=io.github.jtmb.Tend
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true
+StartupWMClass=io.github.jtmb.Tend
