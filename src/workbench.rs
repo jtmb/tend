@@ -3,14 +3,13 @@ use adw::prelude::*;
 use gtk::{glib, Orientation};
 use std::{
     cell::{Cell, RefCell},
-    collections::VecDeque,
     path::PathBuf,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tend::{preferences as pref, workstation as w};
 
@@ -135,8 +134,7 @@ fn choose_folder(win: &adw::ApplicationWindow, entry: &gtk::Entry) {
 pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     storage(stack, win);
     cleanup(stack, win);
-    monitor(stack, win);
-    processes(stack, win);
+    crate::task_manager::add(stack, win);
     startup(stack, win);
     tuning(stack, win);
     development(stack, win);
@@ -447,255 +445,6 @@ fn cleanup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let parent = win.clone();
     apply.connect_clicked(move|b|{let Some(json)=approved.borrow().clone()else{return};let (b,v,preview,widgets,approved)=(b.clone(),view.clone(),preview.clone(),widgets.clone(),approved.clone());confirm(&parent,"Delete the selected cache and Trash contents?","This permanently removes the categories shown in your preview. Docker eligibility is rechecked at execution. No updates or restart will run.","Clean selected",true,move||{b.set_sensitive(false);preview.set_sensitive(false);widgets.sensitive(false);approved.borrow_mut().take();v.buffer().set_text("Cleaning selected categories… Ubuntu may ask for administrator authentication.");let (b,v,preview,widgets)=(b.clone(),v.clone(),preview.clone(),widgets.clone());let json=json.clone();job(move||privileged("cleanup",Some(json)),move|r|{b.set_sensitive(false);preview.set_sensitive(true);widgets.sensitive(true);let text=r.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}"));let _=w::record("cleanup-result",&text);v.buffer().set_text(&text);});});});
     stack.add_titled(&scroll(&p), Some("cleanup"), "Disk cleanup");
-}
-fn monitor(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    let p=page("System monitor","Live counters refresh every three seconds while this page is open. History is kept in memory for three minutes.");
-    let view = text_panel(&p);
-    view.buffer()
-        .set_text("Open this page to begin collecting samples.");
-    let chart = gtk::DrawingArea::builder()
-        .content_height(100)
-        .hexpand(true)
-        .build();
-    p.prepend(&chart);
-    let history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::new()));
-    let values = history.clone();
-    chart.set_draw_func(move |_, cr, width, height| {
-        let values = values.borrow();
-        for (index, color) in [(0, (0.2, 0.55, 0.95)), (1, (0.15, 0.7, 0.45))] {
-            cr.set_source_rgb(color.0, color.1, color.2);
-            cr.set_line_width(2.);
-            for (i, (cpu, ram)) in values.iter().enumerate() {
-                let y = height as f64 * (1. - if index == 0 { *cpu } else { *ram });
-                let x = i as f64 / 59. * width as f64;
-                if i == 0 {
-                    cr.move_to(x, y);
-                } else {
-                    cr.line_to(x, y);
-                }
-            }
-            let _ = cr.stroke();
-        }
-    });
-    p.append(&label("Chart: blue CPU • green memory • 0–100%", "caption"));
-    let bar = buttons(&p);
-    let snap = button(&bar, "Save performance snapshot");
-    let v = view.clone();
-    snap.connect_clicked(move |_| {
-        let b = v.buffer();
-        let text = b.text(&b.start_iter(), &b.end_iter(), false);
-        let _ = w::record("performance", &text);
-    });
-    exports(&p, &view);
-    let prev = Rc::new(RefCell::new(None::<w::Sample>));
-    let source = Rc::new(RefCell::new(None::<glib::SourceId>));
-    let source_close = source.clone();
-    win.connect_close_request(move |_| {
-        if let Some(s) = source_close.borrow_mut().take() {
-            s.remove();
-        }
-        glib::Propagation::Proceed
-    });
-    let weak = view.downgrade();
-    stack.connect_visible_child_name_notify(move |s| {
-        if let Some(id) = source.borrow_mut().take() {
-            id.remove();
-        }
-        if s.visible_child_name().as_deref() != Some("monitor") {
-            prev.borrow_mut().take();
-            return;
-        }
-        let (weak, prev, history, chart) = (
-            weak.clone(),
-            prev.clone(),
-            history.clone(),
-            chart.downgrade(),
-        );
-        *source.borrow_mut() = Some(glib::timeout_add_local(Duration::from_secs(3), move || {
-            let (Some(view), Some(chart)) = (weak.upgrade(), chart.upgrade()) else {
-                return glib::ControlFlow::Break;
-            };
-            let sample = w::sample();
-            let text = w::sample_text(&sample, prev.borrow().as_ref());
-            let cpu = prev
-                .borrow()
-                .as_ref()
-                .filter(|p| sample.total > p.total)
-                .map(|p| {
-                    1. - sample.idle.saturating_sub(p.idle) as f64 / (sample.total - p.total) as f64
-                })
-                .unwrap_or(0.);
-            let mem = 1. - sample.memory_available as f64 / sample.memory_total.max(1) as f64;
-            {
-                let mut h = history.borrow_mut();
-                h.push_back((cpu.clamp(0., 1.), mem.clamp(0., 1.)));
-                if h.len() > 60 {
-                    h.pop_front();
-                }
-            }
-            chart.queue_draw();
-            view.buffer().set_text(&text);
-            *prev.borrow_mut() = Some(sample);
-            glib::ControlFlow::Continue
-        }));
-    });
-    stack.add_titled(&scroll(&p), Some("monitor"), "System monitor");
-}
-fn processes(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    let p=page("Apps & processes","Your user processes only. CPU is measured between refreshes; 100% means one fully occupied CPU core. RSS includes shared memory.");
-    let bar = buttons(&p);
-    let refresh = button(&bar, "Refresh processes");
-    let sort = gtk::DropDown::from_strings(&["Memory usage", "CPU usage"]);
-    bar.append(&sort);
-    let quit = button(&bar, "Request quit…");
-    let kill = button(&bar, "Force quit…");
-    kill.add_css_class("destructive-action");
-    let live = gtk::CheckButton::with_label("Refresh every 3 seconds while this page is open");
-    p.append(&live);
-    let process_history = label(
-        "Select a process to track CPU and memory across refreshes.",
-        "caption",
-    );
-    p.append(&process_history);
-    let samples = Rc::new(RefCell::new(VecDeque::<String>::new()));
-    let tracked = Rc::new(Cell::new(None::<u32>));
-    let list = gtk::ListBox::new();
-    list.add_css_class("boxed-list");
-    list.set_selection_mode(gtk::SelectionMode::Single);
-    p.append(&list);
-    let status = label(
-        "Refresh to load processes. Refresh again for interval CPU usage.",
-        "caption",
-    );
-    p.append(&status);
-    let values = Rc::new(RefCell::new(Vec::<w::Process>::new()));
-    let last = Rc::new(Cell::new(Instant::now()));
-    let (data, ls, st) = (values.clone(), list.clone(), status.clone());
-    refresh.connect_clicked(move |b| {
-        b.set_sensitive(false);
-        let elapsed = last.get().elapsed().as_secs_f64();
-        last.set(Instant::now());
-        let prior = data.borrow().clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(w::processes(&prior, elapsed));
-        });
-        let (b, data, ls, st, sort) = (
-            b.clone(),
-            data.clone(),
-            ls.clone(),
-            st.clone(),
-            sort.clone(),
-        );
-        let (samples, tracked, process_history) =
-            (samples.clone(), tracked.clone(), process_history.clone());
-        glib::timeout_add_local(Duration::from_millis(100), move || match rx.try_recv() {
-            Ok(mut entries) => {
-                b.set_sensitive(true);
-                if sort.selected() == 0 {
-                    entries.sort_by_key(|p| std::cmp::Reverse(p.rss));
-                } else {
-                    entries.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
-                }
-                let selected = ls
-                    .selected_row()
-                    .and_then(|row| data.borrow().get(row.index() as usize).map(|p| p.pid));
-                if tracked.get() != selected {
-                    samples.borrow_mut().clear();
-                    tracked.set(selected);
-                }
-                if let Some(process) = entries.iter().find(|p| Some(p.pid) == selected) {
-                    let mut history = samples.borrow_mut();
-                    history.push_back(format!("{:.1}% / {}", process.cpu, w::bytes(process.rss)));
-                    if history.len() > 8 {
-                        history.pop_front();
-                    }
-                    process_history.set_text(&format!(
-                        "{} · CPU / RSS, oldest → newest\n{}",
-                        process.name,
-                        history.iter().cloned().collect::<Vec<_>>().join("   ·   ")
-                    ));
-                }
-                while let Some(child) = ls.first_child() {
-                    ls.remove(&child);
-                }
-                for e in entries.iter().take(100) {
-                    let r = adw::ActionRow::builder()
-                        .use_markup(false)
-                        .title(&e.name)
-                        .subtitle(format!(
-                            "PID {} · {} RSS · {:.1}% CPU",
-                            e.pid,
-                            w::bytes(e.rss),
-                            e.cpu
-                        ))
-                        .build();
-                    ls.append(&r);
-                }
-                st.set_text(&format!(
-                    "{} processes; showing the first 100. Select a row before requesting quit.",
-                    entries.len()
-                ));
-                if let Some(index) = entries
-                    .iter()
-                    .take(100)
-                    .position(|p| Some(p.pid) == selected)
-                {
-                    ls.select_row(ls.row_at_index(index as i32).as_ref());
-                }
-                *data.borrow_mut() = entries;
-                glib::ControlFlow::Break
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(_) => {
-                b.set_sensitive(true);
-                st.set_text("Process collection stopped.");
-                glib::ControlFlow::Break
-            }
-        });
-    });
-    for (button, force) in [(quit, false), (kill, true)] {
-        let (values, list, win, status) =
-            (values.clone(), list.clone(), win.clone(), status.clone());
-        button.connect_clicked(move |_|{let Some(index)=list.selected_row().map(|r|r.index() as usize)else{status.set_text("Select a process first.");return};let Some(process)=values.borrow().get(index).cloned()else{return};let message=format!("{} (PID {}). {}",process.name,process.pid,if force{"Force quit can lose unsaved work and interrupt writes."}else{"Sends a termination request. The application may exit without saving; save your work first."});let status=status.clone();confirm(&win,if force{"Force quit this process?"}else{"Request this process to quit?"},&message,if force{"Force quit"}else{"Request quit"},true,move||{status.set_text(&w::signal_process(&process,force).unwrap_or_else(|e|e));});});
-    }
-    let source = Rc::new(RefCell::new(None::<glib::SourceId>));
-    let close_source = source.clone();
-    win.connect_close_request(move |_| {
-        if let Some(id) = close_source.borrow_mut().take() {
-            id.remove();
-        }
-        glib::Propagation::Proceed
-    });
-    let update: Rc<dyn Fn()> = Rc::new({
-        let stack = stack.downgrade();
-        let live = live.downgrade();
-        let refresh = refresh.downgrade();
-        move || {
-            if let Some(id) = source.borrow_mut().take() {
-                id.remove();
-            }
-            let (Some(stack), Some(live), Some(refresh)) =
-                (stack.upgrade(), live.upgrade(), refresh.upgrade())
-            else {
-                return;
-            };
-            if stack.visible_child_name().as_deref() != Some("processes") || !live.is_active() {
-                return;
-            }
-            *source.borrow_mut() =
-                Some(glib::timeout_add_local(Duration::from_secs(3), move || {
-                    if refresh.is_sensitive() {
-                        refresh.emit_clicked();
-                    }
-                    glib::ControlFlow::Continue
-                }));
-        }
-    });
-    let update_page = update.clone();
-    stack.connect_visible_child_name_notify(move |_| update_page());
-    live.connect_toggled(move |_| update());
-    stack.add_titled(&scroll(&p), Some("processes"), "Apps & processes");
 }
 fn startup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let p=page("Startup & services","Manage login applications and optional services installed in your user account. Changes affect future activation; they do not close running apps.");

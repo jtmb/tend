@@ -13,8 +13,7 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 | **Overview** | Free disk space, CPU/memory/swap snapshot, maintenance status and recent results. |
 | **Storage** | Cancellable folder scans; allocated size, largest files, and development directories; open locations in Files. |
 | **Disk cleanup** | Category selection, preview, age/cache allowances, execution results and free-space change. |
-| **System monitor** | CPU, memory, swap, paging and pressure counters; available temperatures/battery; three-minute CPU/memory graph. |
-| **Apps & processes** | User processes sorted by memory or interval CPU use; optional live refresh, selected-process history, termination request and separately confirmed force quit. |
+| **Task Manager** | Windows 11–inspired Processes and Performance views: live searchable/sortable process table; CPU, memory, per-disk and per-adapter graphs; available GPU counters; process controls, update speed and snapshot export. |
 | **Startup & services** | Login application overrides, optional local user-service enablement, boot timing and last session-restoration report. |
 | **Performance settings** | Desktop animations, Ubuntu display controls, ChatGPT/VS Code Wayland launchers, swappiness and zram configuration. |
 | **Development tools** | Docker storage/resource reports, local JSON log sizes and limits, pip cache report and npm cache verification. |
@@ -36,11 +35,19 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 
 </details>
 
+## Task Manager
+
+![Task Manager performance view](assets/task-manager.png)
+
+Processes includes name, CPU, resident memory, physical disk I/O, PID, user and state. Search by name, PID or user; click headers to sort. CPU is a share of total machine capacity. Memory includes shared pages, so adding process RSS can exceed physical RAM usage. Restricted counters display an em dash. Other users’ processes are read-only; desktop services and Tend itself are protected from termination.
+
+Performance shows CPU, memory, physical-disk active time and read/write rates, and receive/send rates per network adapter. Physical network adapters appear before virtual Docker adapters. GPU usage appears only when the kernel exposes a readable utilization counter. Linux does not provide per-process network rates through these counters, so network traffic is shown per adapter. An expandable section retains paging, pressure, battery and temperature readings where available. Export explicitly saves the current resource/process snapshot locally.
+
 ## Low overhead
 
 - No folder scans, Docker queries or package refreshes at startup.
-- The monitor samples every three seconds **only while its page is selected**. Its graph retains 60 samples in memory. Closing the window stops sampling.
-- Process lists refresh on request, or every three seconds on their open page when live refresh is enabled. Expensive reports refresh on request. Scans run on a lower-priority worker thread with progress and cancellation.
+- Task Manager samples every two seconds by default **only while its page is selected**, with pause/1/2/5-second controls. Resource graphs retain 60 samples in memory. Closing the window stops sampling.
+- Process tables use native GTK list virtualization and sortable columns. Collection runs on a worker thread without overlapping samples. Expensive reports refresh on request. Scans run on a lower-priority worker thread with progress and cancellation.
 - Scans skip symlinks and other filesystems, count allocated blocks once per inode, and report incomplete results if cancelled or their safety limits are reached.
 - Tend uses systemd for the existing scheduled maintenance. Upgrading Tend does not create a new timer or change that schedule.
 
@@ -103,16 +110,11 @@ cd tend
 ./scripts/install.sh
 ```
 
-The build uses one job at a time. On an **existing Tend installation**, the installer uses a binary/assets-only upgrade: it backs up the old installed files, replaces the app/helper/worker, checks their hashes and leaves timers, maintenance configuration and reboot hooks untouched. A failed file replacement rolls back the files already replaced.
+The build uses one job at a time. Regular installation and updates replace only the interface under `~/scripts/tend`, its user desktop launcher and its user icon. **They do not invoke sudo or pkexec and do not open password dialogs.** The dock keeps the same application identity. Backups of replaced user files are kept beside them.
 
-To explicitly perform that upgrade after building:
+The trusted system helper must already be installed. If it is missing, the installer stops with an explanation instead of opening an authentication prompt. A first-time administrator setup for the existing maintenance deployment can be performed explicitly with `pkexec /usr/bin/python3 "$PWD/scripts/install.py"`; this is separate from routine interface updates. Helper changes also require an explicit administrator-managed upgrade, and are never automatically attempted by the user installer.
 
-```sh
-cargo build --release --locked -j 1
-pkexec /usr/bin/python3 "$PWD/scripts/upgrade.py"
-```
-
-Close and reopen Tend to use the new binary. Open it from the dock or application launcher.
+Close and reopen Tend to use an interface update. Open it from the dock or application launcher.
 
 ## Remember Tend authorization
 
@@ -153,7 +155,9 @@ cargo build --release --locked -j 1
 | Source | Responsibility |
 | --- | --- |
 | `src/main.rs` | Existing schedule, activity, appearance and app shell. |
-| `src/workbench.rs` | Storage, monitoring, tuning and recovery pages. |
+| `src/workbench.rs` | Storage, tuning and recovery pages. |
+| `src/task_manager.rs` | Native Task Manager tables, controls and resource graphs. |
+| `src/task_stats.rs` | Read-only process, disk, network and GPU counters. |
 | `src/workstation.rs` | Scans, reports, cache operations and process counters. |
 | `src/preferences.rs` | User preferences, startup entries, launcher overrides and recovery. |
 | `src/bin/tend-admin.rs` | Constrained privileged operations. |
@@ -169,7 +173,7 @@ Use Recovery first if you also want to undo tuning changes. The uninstaller pres
 pkexec /usr/bin/python3 "$PWD/scripts/uninstall.py"
 ```
 
-The original maintenance integration and schedules are restored by this existing uninstall procedure. It is distinct from the binary-only upgrade. Unpin Tend from the dock afterward.
+Remove the user interface first with `rm -- "$HOME/scripts/tend" "$HOME/.local/share/applications/io.github.jtmb.Tend.desktop" "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg"`. The administrator uninstall then restores the original maintenance integration and schedules. Unpin Tend from the dock afterward.
 
 ## License
 

@@ -1,3 +1,4 @@
+mod task_manager;
 mod workbench;
 use adw::prelude::*;
 use gtk::{glib, Orientation};
@@ -510,7 +511,14 @@ fn build(app: &adw::Application) {
         let mut attempts = 0;
         glib::timeout_add_local(Duration::from_millis(500), move || {
             attempts += 1;
-            if attempts < 6 || stack.is_transition_running() {
+            if attempts
+                < (if stack.visible_child_name().as_deref() == Some("task-manager") {
+                    14
+                } else {
+                    6
+                })
+                || stack.is_transition_running()
+            {
                 return glib::ControlFlow::Continue;
             }
             let shot = gtk::Snapshot::new();

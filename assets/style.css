@@ -7,3 +7,7 @@ window { background: @window_bg_color; }
 .page-title { font-size: 25px; font-weight: 800; }
 .caption { font-size: 12px; opacity: 0.65; }
 .pill { background: alpha(@accent_bg_color,0.12); color: @accent_color; border-radius: 12px; padding: 5px 12px; font-size: 11px; font-weight: 700; }
+
+.tm-usage { background: alpha(@accent_bg_color,0.08); font-variant-numeric: tabular-nums; }
+.tm-chart { border: 1px solid alpha(@accent_bg_color,0.25); border-radius: 6px; background: alpha(@accent_bg_color,0.025); }
+.data-table { font-variant-numeric: tabular-nums; }

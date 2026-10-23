@@ -42,3 +42,11 @@ The user requested avoiding repeated password prompts. Optional setup grants the
 ## Installed delivery
 
 The app, administrator helper and user worker were installed and their hashes matched the optimized release binaries. The installed helper's read-only authorization check succeeded without an authentication dialog. The installed UI launched successfully. Schedule, reminder and restart-hook hashes matched the pre-upgrade baseline. No cleanup, package update, tuning change or machine restart was performed during delivery. The user-specific optional authorization rule stores no password.
+
+## Windows 11–inspired Task Manager
+
+Replaces the original monitor/process pages with a native two-tab Task Manager. The virtualized process table supports search, numeric column sorting, user filtering, details and protected termination controls. Resource selection shows 60-sample CPU/memory/disk/network graphs and readable kernel GPU counters. Physical network adapters sort before virtual adapters. Sampling defaults to two seconds with pause/1/2/5-second controls and stops off-page. Collection uses one worker at a time; unavailable counters remain explicit. Sensor/pressure/paging diagnostics remain available in an expander. Twelve library tests passed, including counter resets, network field parsing and live collector sanity. Native process and performance layouts were rendered for review.
+
+## Password prompt correction
+
+Routine updates now use `scripts/install-user.py`: the UI lives at `~/scripts/tend`, and a per-user desktop launcher overrides the system launcher under the same dock identity. `scripts/install.sh` builds only the interface and never invokes pkexec/sudo. The already-installed root helper and its scoped authorization remain separate. Missing helper prerequisites produce an error, not an automatic authentication prompt. This prevents repeated interface-install prompts without storing a login password or granting an editable installer general administrator access.

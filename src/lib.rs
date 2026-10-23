@@ -90,4 +90,5 @@ mod tests {
     }
 }
 pub mod preferences;
+pub mod task_stats;
 pub mod workstation;
