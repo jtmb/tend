@@ -902,9 +902,7 @@ pub fn history() -> Result<String, String> {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
                 let when = value["time_unix"]
                     .as_i64()
-                    .and_then(|ts| gtk::glib::DateTime::from_unix_local(ts).ok())
-                    .and_then(|d| d.format("%Y-%m-%d %H:%M:%S %Z").ok())
-                    .map(|s| s.to_string())
+                    .map(crate::presentation::when)
                     .unwrap_or_else(|| "Unknown date".into());
                 text.push_str(&format!(
                     "{} · {}\n{}\n\n",

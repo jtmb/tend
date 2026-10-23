@@ -176,9 +176,12 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
                         .get("Signal")
                         .map(String::as_str)
                         .unwrap_or("unknown"),
-                    fields.get("Date").map(String::as_str).unwrap_or("")
+                    &fields
+                        .get("Date")
+                        .map(|s| crate::presentation::source_date(s))
+                        .unwrap_or_default()
                 );
-                entries.push(Entry{time,source:format!("Crash · {name}"),priority:3,message,crash:true,details:format!("Application: {name}\nReport: {}\nPackage: {}\nDate: {}\nSignal: {}\n\nOnly report headers are read; crash memory and environment are omitted.",p.display(),fields.get("Package").map(String::as_str).unwrap_or(""),fields.get("Date").map(String::as_str).unwrap_or(""),fields.get("Signal").map(String::as_str).unwrap_or(""))});
+                entries.push(Entry{time,source:format!("Crash report · {name}"),priority:3,message,crash:true,details:format!("Application: {name}\nReport: {}\nPackage: {}\nReported: {} (timezone not supplied by report)\nReport updated: {}\nSignal: {}\n\nOnly report headers are read; crash memory and environment are omitted.",p.display(),fields.get("Package").map(String::as_str).unwrap_or(""),fields.get("Date").map(|s|crate::presentation::source_date(s)).unwrap_or_default(),crate::presentation::exact(time),fields.get("Signal").map(String::as_str).unwrap_or(""))});
             }
         }
     }
@@ -187,11 +190,7 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
     serde_json::to_string(&entries).map_err(|e| e.to_string())
 }
 pub fn time(value: i64) -> String {
-    gtk::glib::DateTime::from_unix_local(value)
-        .ok()
-        .and_then(|d| d.format("%b %d %H:%M:%S").ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "Unknown time".into())
+    crate::presentation::when(value)
 }
 #[cfg(test)]
 mod tests {

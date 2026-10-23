@@ -11,7 +11,7 @@ use std::{
     sync::mpsc,
     time::Duration,
 };
-use tend::{output, Settings};
+use tend::{output, presentation as dates, Settings};
 const ID: &str = "io.github.jtmb.Tend";
 fn label(text: &str, class: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
@@ -25,17 +25,22 @@ fn column(spacing: i32) -> gtk::Box {
 }
 fn page(title: &str, description: &str) -> gtk::Box {
     let b = column(20);
-    b.set_margin_top(28);
+    b.set_margin_top(24);
     b.set_margin_bottom(28);
-    b.set_margin_start(30);
-    b.set_margin_end(30);
+    b.set_margin_start(28);
+    b.set_margin_end(28);
     b.append(&label(title, "page-title"));
     b.append(&label(description, "dim-label"));
     b
 }
 fn scroll(b: &gtk::Box) -> gtk::ScrolledWindow {
-    gtk::ScrolledWindow::builder()
+    let clamp = adw::Clamp::builder()
+        .maximum_size(1080)
+        .tightening_threshold(860)
         .child(b)
+        .build();
+    gtk::ScrolledWindow::builder()
+        .child(&clamp)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .hexpand(true)
         .vexpand(true)
@@ -113,6 +118,7 @@ fn snapshot() -> Result<String, String> {
     let next = output(
         "/usr/bin/systemctl",
         &[
+            "--timestamp=unix",
             "show",
             "dev-maintenance.timer",
             "--property=NextElapseUSecRealtime",
@@ -130,33 +136,40 @@ fn snapshot() -> Result<String, String> {
         .lines()
         .last()
         .and_then(|s| s.trim().parse::<f64>().ok())
-        .map(|n| format!("{:.1} GB", n / 1e9))
+        .map(|n| tend::workstation::bytes(n as u64))
         .unwrap_or_else(|| "Unavailable".into());
     let report = fs::read_to_string("/var/lib/dev-maintenance/latest-report.json")
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-    let mut phases = String::new();
+    let mut completed = 0;
+    let mut pending = 0;
     let mut last = "No report yet".to_string();
     if let Some(r) = report {
-        last = r["window"].as_str().unwrap_or("Unknown date").into();
+        last = dates::date(r["window"].as_str().unwrap_or(""));
         if let Some(p) = r["phases"].as_object() {
-            for (k, v) in p {
-                phases.push_str(&format!(
-                    "{}  ·  {}\n",
-                    if v["success"].as_bool() == Some(true) {
-                        "✓"
-                    } else {
-                        "•"
-                    },
-                    k.replace('-', " ")
-                ));
+            for v in p.values() {
+                if v["success"].as_bool() == Some(true) {
+                    completed += 1;
+                } else {
+                    pending += 1;
+                }
             }
         }
     }
+    std::thread::sleep(Duration::from_millis(250));
     let after = tend::workstation::sample();
     let health = tend::workstation::sample_text(&after, Some(&before));
-    let summary = health.lines().take(4).collect::<Vec<_>>().join("\n");
-    phases = format!("{summary}\n\nRecent maintenance\n{phases}");
+    let cpu = health.lines().next().unwrap_or("CPU unavailable");
+    let summary = format!(
+        "{cpu}\nMemory {} of {} used\nDisk swap {} of {} used",
+        tend::workstation::bytes(after.memory_total.saturating_sub(after.memory_available)),
+        tend::workstation::bytes(after.memory_total),
+        tend::workstation::bytes(after.swap_total.saturating_sub(after.swap_free)),
+        tend::workstation::bytes(after.swap_total)
+    );
+    let phases = format!(
+        "{summary}\n\nLatest maintenance: {completed} completed · {pending} need attention"
+    );
     Ok(
         serde_json::json!({"next":next,"active":active,"free":free,"last":last,"phases":phases})
             .to_string(),
@@ -185,12 +198,13 @@ fn refresh(
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| e.to_string()))
         {
             Ok(v) => {
+                let next_time = v["next"].as_str().and_then(dates::systemd);
                 next.set_text(
-                    v["next"]
-                        .as_str()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("No run scheduled"),
+                    &next_time
+                        .map(dates::when)
+                        .unwrap_or_else(|| "Not scheduled".into()),
                 );
+                next.set_tooltip_text(next_time.map(dates::exact).as_deref());
                 free.set_text(v["free"].as_str().unwrap_or("—"));
                 last.set_text(v["last"].as_str().unwrap_or("—"));
                 phase.set_text(
@@ -226,6 +240,32 @@ fn build(app: &adw::Application) {
     let outer = column(0);
     outer.add_css_class("app-root");
     let header = adw::HeaderBar::new();
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
+    let window_controls = gtk::WindowControls::builder()
+        .side(gtk::PackType::End)
+        .decoration_layout(":minimize,maximize")
+        .build();
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.add_css_class("titlebutton");
+    close.add_css_class("circular");
+    close.set_tooltip_text(Some("Close window · keep in dock when enabled"));
+    let window = win.downgrade();
+    close.connect_clicked(move |_| {
+        if let Some(w) = window.upgrade() {
+            let keep = fs::read_to_string(glib::user_config_dir().join("tend/background"))
+                .ok()
+                .map(|s| s.trim() != "false")
+                .unwrap_or(true);
+            if keep {
+                w.minimize()
+            } else {
+                w.close()
+            }
+        }
+    });
+    header.pack_end(&close);
+    header.pack_end(&window_controls);
     let menu = gtk::gio::Menu::new();
     menu.append(Some("Show Tend"), Some("app.show"));
     menu.append(Some("Quit Tend"), Some("app.quit"));
@@ -249,14 +289,12 @@ fn build(app: &adw::Application) {
     if std::env::var_os("TEND_SCREENSHOT").is_some() {
         stack.set_transition_type(gtk::StackTransitionType::None);
     }
-    let sidebar = gtk::StackSidebar::new();
-    sidebar.set_stack(&stack);
-    sidebar.set_size_request(170, -1);
+    let sidebar = gtk::Box::new(Orientation::Vertical, 3);
     sidebar.add_css_class("sidebar");
     let navigation = gtk::ScrolledWindow::builder()
         .child(&sidebar)
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .min_content_width(195)
+        .width_request(208)
         .build();
     layout.append(&navigation);
     layout.append(&gtk::Separator::new(Orientation::Vertical));
@@ -269,7 +307,7 @@ fn build(app: &adw::Application) {
     home.append(&badge);
     let metrics = gtk::Box::new(Orientation::Horizontal, 14);
     let free = label("—", "metric");
-    let last = label("—", "metric");
+    let last = label("—", "metric-date");
     for (heading, value) in [("Free space", &free), ("Last maintenance", &last)] {
         let b = column(10);
         b.add_css_class("metric-card");
@@ -281,7 +319,10 @@ fn build(app: &adw::Application) {
     home.append(&metrics);
     let group = adw::PreferencesGroup::builder().title("Next run").build();
     let next = label("Reading your schedule…", "body");
-    next.set_max_width_chars(40);
+    next.add_css_class("numeric");
+    next.set_wrap(false);
+    next.set_halign(gtk::Align::End);
+    next.set_max_width_chars(28);
     row(
         &group,
         "Next maintenance",
@@ -311,8 +352,8 @@ fn build(app: &adw::Application) {
     workbench::add(&stack, &win);
     let settings = Settings::read();
     let schedule = page(
-        "Schedule",
-        "Changes take effect when you save. Ubuntu asks for administrator authentication.",
+        "Maintenance schedule",
+        "Daily maintenance and advance reminders. Changes take effect when saved.",
     );
     let loaded = settings.clone().unwrap_or_default();
     if let Err(ref e) = settings {
@@ -334,6 +375,13 @@ fn build(app: &adw::Application) {
     let minute = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
     minute.set_value(loaded.minute as f64);
     minute.set_tooltip_text(Some("Minute, 0–59"));
+    for spin in [&hour, &minute] {
+        spin.connect_output(|s| {
+            s.set_text(&format!("{:02}", s.value_as_int()));
+            gtk::glib::Propagation::Stop
+        });
+        spin.set_text(&format!("{:02}", spin.value_as_int()));
+    }
     time.append(&hour);
     time.append(&label(":", "title-3"));
     time.append(&minute);
@@ -379,7 +427,7 @@ fn build(app: &adw::Application) {
         loaded.reboot,
     );
     schedule.append(&rg);
-    schedule.append(&label("The existing one-use login and TPM keyring policy handles maintenance restarts. Supported apps and running containers reopen; unsaved work and running terminal jobs cannot be guaranteed.","caption"));
+    schedule.append(&label("Supported applications and running containers reopen after maintenance restarts. Save your work; terminal jobs and unsaved changes may not be restored.","caption"));
     let save = gtk::Button::with_label("Save settings");
     save.add_css_class("suggested-action");
     save.set_halign(gtk::Align::End);
@@ -402,7 +450,7 @@ fn build(app: &adw::Application) {
         };
         let json = serde_json::to_string(&s).unwrap();
         button.set_sensitive(false);
-        saved.set_text("Waiting for Ubuntu authentication…");
+        saved.set_text("Saving maintenance settings…");
         let (button, saved, toast) = (button.clone(), saved.clone(), toast_save.clone());
         job(
             move || privileged("apply", Some(json)),
@@ -457,7 +505,7 @@ fn build(app: &adw::Application) {
     let background = toggle(
         &appearance,
         "Close to dock",
-        "Keep Tend running when its window closes; live monitoring pauses while minimized",
+        "The title-bar close button minimizes Tend. Dock Quit, Alt+F4 and Quit Tend always exit.",
         fs::read_to_string(&background_path).ok().as_deref() != Some("false"),
     );
     background.connect_active_notify(move |b| {
@@ -524,18 +572,77 @@ fn build(app: &adw::Application) {
     refresh_button.connect_clicked(move |button| refresh(&n, &f, &l, &p, &b, button));
     let cleanup_stack = stack.clone();
     run.connect_clicked(move |_| cleanup_stack.set_visible_child_name("cleanup"));
-    win.connect_close_request(|w| {
-        let keep = fs::read_to_string(glib::user_config_dir().join("tend/background"))
-            .ok()
-            .as_deref()
-            != Some("false");
-        if keep && std::env::var_os("TEND_SCREENSHOT").is_none() {
-            w.minimize();
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
+    for (heading, entries) in [
+        (
+            "Monitor",
+            vec![
+                ("overview", "Overview", "view-grid-symbolic"),
+                (
+                    "task-manager",
+                    "Task Manager",
+                    "utilities-system-monitor-symbolic",
+                ),
+                ("system-logs", "System logs", "view-list-symbolic"),
+            ],
+        ),
+        (
+            "Manage",
+            vec![
+                ("storage", "Storage", "drive-harddisk-symbolic"),
+                ("cleanup", "Disk cleanup", "edit-clear-all-symbolic"),
+                ("startup", "Startup & services", "system-run-symbolic"),
+                ("tuning", "Performance", "preferences-system-symbolic"),
+                (
+                    "development",
+                    "Development tools",
+                    "applications-engineering-symbolic",
+                ),
+                (
+                    "reports",
+                    "Updates & reports",
+                    "software-update-available-symbolic",
+                ),
+                ("recovery", "Recovery", "edit-undo-symbolic"),
+            ],
+        ),
+        (
+            "Preferences",
+            vec![
+                ("schedule", "Maintenance", "alarm-symbolic"),
+                (
+                    "cleanup-scheduling",
+                    "Cleanup schedule",
+                    "x-office-calendar-symbolic",
+                ),
+                ("care", "Appearance", "applications-graphics-symbolic"),
+                ("activity", "Activity", "document-open-recent-symbolic"),
+            ],
+        ),
+    ] {
+        let section = label(heading, "nav-heading");
+        sidebar.append(&section);
+        for (id, title, icon) in entries {
+            let button = gtk::ToggleButton::new();
+            button.add_css_class("nav-item");
+            let content = gtk::Box::new(Orientation::Horizontal, 10);
+            content.append(&gtk::Image::from_icon_name(icon));
+            content.append(&label(title, "body"));
+            button.set_child(Some(&content));
+            button.set_active(stack.visible_child_name().as_deref() == Some(id));
+            let pages = stack.clone();
+            button.connect_clicked(move |b| {
+                pages.set_visible_child_name(id);
+                b.set_active(true);
+            });
+            let target = button.downgrade();
+            stack.connect_visible_child_name_notify(move |s| {
+                if let Some(b) = target.upgrade() {
+                    b.set_active(s.visible_child_name().as_deref() == Some(id));
+                }
+            });
+            sidebar.append(&button);
         }
-    });
+    }
     win.set_content(Some(&outer));
     win.present();
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
@@ -608,7 +715,7 @@ fn main() -> glib::ExitCode {
             if let Some(app) = weak.upgrade() {
                 if let Some(w) = app.windows().first() {
                     if action == "hide" {
-                        w.close();
+                        w.minimize();
                     } else {
                         w.unminimize();
                         w.present();

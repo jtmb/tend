@@ -94,3 +94,5 @@ pub mod preferences;
 pub mod system_logs;
 pub mod task_stats;
 pub mod workstation;
+
+pub mod presentation;

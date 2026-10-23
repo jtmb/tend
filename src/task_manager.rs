@@ -463,6 +463,14 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let details = label("Collecting…", "title-4");
     panel.append(&details);
     panel.append(&label("GPU usage appears when a readable kernel utilization counter is available. Virtual block devices are excluded to avoid counting disk traffic twice.","caption"));
+    let mut child = panel.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Ok(text) = widget.downcast::<gtk::Label>() {
+            text.set_max_width_chars(52);
+            text.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        }
+    }
     let diagnostics = label("Collecting…", "monospace");
     diagnostics.set_selectable(true);
     let extra = gtk::Expander::builder()
@@ -478,7 +486,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     performance.append(&detail_scroll);
     tabs.add_titled(&performance, Some("performance"), "Performance");
     let controls = gtk::Box::new(Orientation::Horizontal, 8);
-    controls.append(&label("Update speed", "caption"));
+    let speed_label = label("Update speed", "caption");
+    speed_label.set_wrap(false);
+    controls.append(&speed_label);
     let speed = gtk::DropDown::from_strings(&["Paused", "1 second", "2 seconds", "5 seconds"]);
     speed.set_selected(2);
     controls.append(&speed);

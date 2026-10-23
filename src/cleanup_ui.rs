@@ -259,6 +259,13 @@ pub fn schedule_page(stack: &gtk::Stack) {
     hour.set_value(10.);
     let minute = gtk::SpinButton::with_range(0., 59., 1.);
     let clock = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    for spin in [&hour, &minute] {
+        spin.connect_output(|s| {
+            s.set_text(&format!("{:02}", s.value_as_int()));
+            gtk::glib::Propagation::Stop
+        });
+        spin.set_text(&format!("{:02}", spin.value_as_int()));
+    }
     clock.append(&hour);
     clock.append(&label(":", "body"));
     clock.append(&minute);
@@ -380,9 +387,22 @@ pub fn schedule_page(stack: &gtk::Stack) {
         );
     });
     result.connect_clicked(move |_| {
+        let result = std::fs::read_to_string(w::state_dir().join("scheduled-cleanup.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
         status.set_text(
-            &std::fs::read_to_string(w::state_dir().join("scheduled-cleanup.json"))
-                .unwrap_or_else(|_| "No scheduled cleanup has run yet.".into()),
+            &result
+                .map(|v| {
+                    format!(
+                        "Last run: {}\n\n{}",
+                        v["finished_unix"]
+                            .as_i64()
+                            .map(tend::presentation::when)
+                            .unwrap_or_else(|| "Unavailable".into()),
+                        v["report"].as_str().unwrap_or("No report available")
+                    )
+                })
+                .unwrap_or_else(|| "No scheduled cleanup has run yet.".into()),
         );
     });
     stack.add_titled(

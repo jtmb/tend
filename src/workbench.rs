@@ -33,14 +33,23 @@ fn text_panel(parent: &gtk::Box) -> gtk::TextView {
     parent.append(&sc);
     view
 }
-fn buttons(parent: &gtk::Box) -> gtk::Box {
-    let b = gtk::Box::new(Orientation::Horizontal, 8);
+fn buttons(parent: &gtk::Box) -> gtk::FlowBox {
+    let b = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .row_spacing(8)
+        .column_spacing(8)
+        .max_children_per_line(6)
+        .min_children_per_line(1)
+        .homogeneous(false)
+        .halign(gtk::Align::Start)
+        .build();
+    b.add_css_class("action-flow");
     parent.append(&b);
     b
 }
-fn button(parent: &gtk::Box, title: &str) -> gtk::Button {
+fn button(parent: &gtk::FlowBox, title: &str) -> gtk::Button {
     let b = gtk::Button::with_label(title);
-    parent.append(&b);
+    parent.insert(&b, -1);
     b
 }
 fn confirm<F: Fn() + 'static>(
@@ -151,7 +160,8 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .text(w::home().to_string_lossy())
         .placeholder_text("Folder to scan")
         .build();
-    controls.append(&path);
+    path.set_width_chars(35);
+    controls.insert(&path, -1);
     let choose = button(&controls, "Choose…");
     let (parent, entry) = (win.clone(), path.clone());
     choose.connect_clicked(move |_| choose_folder(&parent, &entry));

@@ -43,8 +43,31 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk::SelectionMode::Single);
+    let empty = gtk::Box::new(Orientation::Vertical, 10);
+    empty.set_valign(gtk::Align::Center);
+    empty.set_halign(gtk::Align::Center);
+    empty.set_margin_top(24);
+    empty.set_margin_bottom(24);
+    let empty_icon = gtk::Image::from_icon_name("view-list-symbolic");
+    empty_icon.set_pixel_size(36);
+    empty_icon.add_css_class("dim-label");
+    let empty_title = label("Choose logs to inspect", "heading");
+    empty_title.set_halign(gtk::Align::Center);
+    let empty_description = label(
+        "Load recent events or view reported application crashes.",
+        "caption",
+    );
+    empty_description.set_max_width_chars(52);
+    empty_description.set_justify(gtk::Justification::Center);
+    empty.append(&empty_icon);
+    empty.append(&empty_title);
+    empty.append(&empty_description);
+    let results = gtk::Stack::new();
+    results.add_named(&empty, Some("empty"));
+    results.add_named(&list, Some("events"));
+    results.set_visible_child_name("empty");
     let pane = gtk::ScrolledWindow::builder()
-        .child(&list)
+        .child(&results)
         .min_content_height(230)
         .vexpand(true)
         .build();
@@ -67,11 +90,15 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .min_content_height(160)
         .build();
     detail_scroll.add_css_class("card");
+    p.append(&label("Event details", "section-label"));
     p.append(&detail_scroll);
     let entries = Rc::new(RefCell::new(Vec::<logs::Entry>::new()));
     let shown = Rc::new(RefCell::new(Vec::<logs::Entry>::new()));
     let filter: Rc<dyn Fn()> = Rc::new({
         let list = list.clone();
+        let results = results.clone();
+        let empty_title = empty_title.clone();
+        let empty_description = empty_description.clone();
         let entries = entries.clone();
         let shown = shown.clone();
         let search = search.clone();
@@ -105,7 +132,17 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             for e in filtered.iter().take(500) {
                 let row = adw::ActionRow::new();
                 row.set_use_markup(false);
-                row.set_title(&format!("{} · {}", logs::time(e.time), e.source));
+                row.set_title(&format!(
+                    "{}{} · {}",
+                    if e.source.starts_with("Crash report ·") {
+                        "Updated "
+                    } else {
+                        ""
+                    },
+                    logs::time(e.time),
+                    e.source
+                ));
+                row.set_tooltip_text(Some(&tend::presentation::exact(e.time)));
                 row.set_subtitle(
                     &e.message
                         .chars()
@@ -124,6 +161,13 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                 list.append(&row);
             }
             status.set_text(&format!("{} matching events; showing up to 500. Searches apply to the most recent 1,000 loaded records. Missing entries may be rotated or unreadable.",filtered.len()));
+            if filtered.is_empty() {
+                empty_title.set_text("No matching events");
+                empty_description.set_text("Try a wider time range or a different filter. Protected and rotated logs may be unavailable.");
+                results.set_visible_child_name("empty");
+            } else {
+                results.set_visible_child_name("events");
+            }
             *shown.borrow_mut() = filtered;
         }
     });
@@ -169,7 +213,11 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     list.connect_row_selected(move |_, row| {
         if let Some(r) = row {
             if let Some(e) = rows.borrow().get(r.index() as usize) {
-                buffer.set_text(&format!("{}\n{}", logs::time(e.time), e.details));
+                buffer.set_text(&format!(
+                    "{}\n{}",
+                    tend::presentation::exact(e.time),
+                    e.details
+                ));
             }
         } else {
             buffer.set_text("Select an event to see its details.");
@@ -178,7 +226,11 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     export.connect_clicked(move |_| {
         let mut text = String::new();
         for e in shown.borrow().iter() {
-            text.push_str(&format!("{}\n{}\n\n", logs::time(e.time), e.details));
+            text.push_str(&format!(
+                "{}\n{}\n\n",
+                tend::presentation::exact(e.time),
+                e.details
+            ));
         }
         status.set_text(&w::export_report(&text, false).unwrap_or_else(|e| e));
     });

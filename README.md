@@ -96,11 +96,13 @@ Optional catch-up checks every 15 minutes and at startup, with a 20-minute boot 
 
 Open **System logs** and click **Load logs**, or **Last crashed apps** for the past seven days. Choose the system journal, your application journal or recent crashes; filter by boot/hour/day/week, severity, or application/service/PID/message text. Selecting an event shows readable details. Export saves the filtered records locally.
 
+Dates use readable Toronto times with full timestamp details. Apport rows distinguish report updates from the original reported crash date.
+
 The reader fetches up to 1,000 recent records on demand, displays up to 500 matching rows and has no background polling. Crash detection uses structured systemd coredump events and readable Ubuntu Apport report headers. Crash memory dumps and environment fields are excluded from the displayed/exported Apport headers. Logs are never uploaded, and collection never requests administrator access. Protected/rotated records can be absent; recent crashes is not a complete historical inventory.
 
 ## Dock behavior
 
-**Appearance → Close to dock** is enabled by default. Closing minimizes the existing window and keeps its dock identity. Open the dock icon to return. Resource sampling stops while minimized or unfocused; expensive reports remain on demand. Choose **Quit Tend** from the header menu or the dock’s explicit action to exit fully. Disable Close to dock to restore exit-on-close behavior. No login background service is added.
+**Appearance → Close to dock** is enabled by default. The title-bar close button minimizes the existing window and keeps its dock identity. Open the dock icon to return. Resource sampling stops while minimized or unfocused; expensive reports remain on demand. Choose **Quit Tend** from the header menu or the dock’s explicit action to exit fully. Dock Quit, Alt+F4 and the header’s Quit Tend action always exit. Disable Close to dock to make the title-bar button exit too. No login background service is added.
 
 ## Tuning and recovery
 
