@@ -1,9 +1,9 @@
 [package]
 name = "tend"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
-description = "A quiet, native control panel for Ubuntu workstation maintenance"
+description = "Native Ubuntu storage, monitoring and performance controls"
 default-run = "tend"
 
 [dependencies]
@@ -12,6 +12,7 @@ adw = { package = "libadwaita", version = "0.8", features = ["v1_5"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 fs2 = "0.4"
+libc = "0.2"
 
 [profile.release]
 opt-level = "s"

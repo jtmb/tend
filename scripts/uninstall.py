@@ -11,7 +11,7 @@ record=json.loads((backup/'user.json').read_text())
 for n in [60,30,15]:
     subprocess.run(['systemctl','disable','--now',f'tend-warning-{n}.timer'],check=False)
     Path(f'/etc/systemd/system/tend-warning-{n}.timer').unlink(missing_ok=True)
-for p in ['/usr/share/polkit-1/actions/io.github.jtmb.Tend.policy','/etc/systemd/system/tend-warning@.service','/etc/systemd/system/dev-maintenance.timer.d/95-tend.conf','/etc/systemd/system/dev-maintenance.service.d/95-tend.conf','/etc/tend/integration-ready','/etc/tend/settings.json','/usr/local/bin/tend','/usr/local/libexec/tend-admin','/usr/local/share/applications/io.github.jtmb.Tend.desktop','/usr/local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg']:
+for p in ['/usr/share/polkit-1/actions/io.github.jtmb.Tend.policy','/etc/systemd/system/tend-warning@.service','/etc/systemd/system/dev-maintenance.timer.d/95-tend.conf','/etc/systemd/system/dev-maintenance.service.d/95-tend.conf','/etc/tend/integration-ready','/etc/tend/settings.json','/usr/local/bin/tend','/usr/local/libexec/tend-worker','/usr/local/libexec/tend-admin','/usr/local/share/applications/io.github.jtmb.Tend.desktop','/usr/local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg']:
     Path(p).unlink(missing_ok=True)
 engine=Path('/usr/local/lib/dev-maintenance/dev-maintenance.py')
 if (backup/'engine.py').exists():

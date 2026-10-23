@@ -89,3 +89,5 @@ mod tests {
         assert!(serde_json::from_str::<Settings>(r#"{"enabled":true,"hour":8,"minute":0,"reboot":true,"warnings":[true,true,true],"command":"bad"}"#).is_err());
     }
 }
+pub mod preferences;
+pub mod workstation;

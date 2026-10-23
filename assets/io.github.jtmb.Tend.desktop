@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Tend
-GenericName=Workstation Maintenance
-Comment=Ubuntu maintenance settings
+GenericName=System Tools
+Comment=Storage cleanup, system monitoring, and performance settings
 Exec=/usr/local/bin/tend
 Icon=io.github.jtmb.Tend
 Terminal=false

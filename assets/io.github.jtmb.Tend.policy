@@ -5,7 +5,7 @@
   <vendor_url>https://github.com/jtmb/tend</vendor_url>
   <action id="io.github.jtmb.Tend.manage">
     <description>Manage workstation maintenance</description>
-    <message>Authentication is required to change maintenance settings or start maintenance.</message>
+    <message>Authentication is required to apply system settings, clean selected caches, or install updates.</message>
     <icon_name>io.github.jtmb.Tend</icon_name>
     <defaults>
       <allow_any>no</allow_any>

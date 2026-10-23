@@ -1,3 +1,4 @@
+mod workbench;
 use adw::prelude::*;
 use gtk::{glib, Orientation};
 use std::{
@@ -38,11 +39,10 @@ fn scroll(b: &gtk::Box) -> gtk::ScrolledWindow {
         .build()
 }
 fn row(group: &adw::PreferencesGroup, title: &str, subtitle: &str, widget: &impl IsA<gtk::Widget>) {
-    let r = adw::ActionRow::builder()
-        .use_markup(false)
-        .title(title)
-        .subtitle(subtitle)
-        .build();
+    let r = adw::ActionRow::new();
+    r.set_use_markup(false);
+    r.set_title(title);
+    r.set_subtitle(subtitle);
     widget.set_valign(gtk::Align::Center);
     r.add_suffix(widget);
     r.set_activatable_widget(Some(widget));
@@ -106,6 +106,7 @@ fn privileged(action: &str, data: Option<String>) -> Result<String, String> {
     }
 }
 fn snapshot() -> Result<String, String> {
+    let before = tend::workstation::sample();
     let next = output(
         "/usr/bin/systemctl",
         &[
@@ -149,6 +150,10 @@ fn snapshot() -> Result<String, String> {
             }
         }
     }
+    let after = tend::workstation::sample();
+    let health = tend::workstation::sample_text(&after, Some(&before));
+    let summary = health.lines().take(4).collect::<Vec<_>>().join("\n");
+    phases = format!("{summary}\n\nRecent maintenance\n{phases}");
     Ok(
         serde_json::json!({"next":next,"active":active,"free":free,"last":last,"phases":phases})
             .to_string(),
@@ -218,7 +223,7 @@ fn build(app: &adw::Application) {
     let outer = column(0);
     outer.add_css_class("app-root");
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new("Tend", "Ubuntu maintenance")));
+    header.set_title_widget(Some(&adw::WindowTitle::new("Tend", "System tools")));
     outer.append(&header);
     let toast = adw::ToastOverlay::new();
     toast.set_vexpand(true);
@@ -234,10 +239,18 @@ fn build(app: &adw::Application) {
     sidebar.set_stack(&stack);
     sidebar.set_size_request(170, -1);
     sidebar.add_css_class("sidebar");
-    layout.append(&sidebar);
+    let navigation = gtk::ScrolledWindow::builder()
+        .child(&sidebar)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_width(195)
+        .build();
+    layout.append(&navigation);
     layout.append(&gtk::Separator::new(Orientation::Vertical));
     layout.append(&stack);
-    let home = page("Maintenance", "Schedule, storage, and recent results.");
+    let home = page(
+        "Overview",
+        "Storage, system health, and maintenance status.",
+    );
     let badge = label("Loading maintenance status…", "body");
     home.append(&badge);
     let metrics = gtk::Box::new(Orientation::Horizontal, 14);
@@ -265,12 +278,12 @@ fn build(app: &adw::Application) {
     let phase = label("Loading…", "body");
     let phasebox = column(12);
     phasebox.add_css_class("metric-card");
-    phasebox.append(&label("Last run results", "section-label"));
+    phasebox.append(&label("System health and recent results", "section-label"));
     phasebox.append(&phase);
     home.append(&phasebox);
     let actions = gtk::Box::new(Orientation::Horizontal, 10);
     let refresh_button = gtk::Button::with_label("Refresh status");
-    let run = gtk::Button::with_label("Run maintenance…");
+    let run = gtk::Button::with_label("Open disk cleanup");
     run.add_css_class("suggested-action");
     actions.append(&run);
     actions.append(&refresh_button);
@@ -281,6 +294,7 @@ fn build(app: &adw::Application) {
         "caption",
     ));
     stack.add_titled(&scroll(&home), Some("overview"), "Overview");
+    workbench::add(&stack, &win);
     let settings = Settings::read();
     let schedule = page(
         "Schedule",
@@ -392,8 +406,8 @@ fn build(app: &adw::Application) {
     });
     stack.add_titled(&scroll(&schedule), Some("schedule"), "Schedule");
     let care = page(
-        "Cleanup & appearance",
-        "Cleanup rules and display preferences.",
+        "Appearance & daily policy",
+        "Display preferences and the existing daily maintenance policy.",
     );
     let cg = adw::PreferencesGroup::builder()
         .title("Cleanup policy")
@@ -426,8 +440,8 @@ fn build(app: &adw::Application) {
     });
     row(&appearance, "Color scheme", "Saved for this app", &theme);
     care.append(&appearance);
-    care.append(&label("Tend 0.1", "caption"));
-    stack.add_titled(&scroll(&care), Some("care"), "Cleanup & appearance");
+    care.append(&label("Tend 0.2", "caption"));
+    stack.add_titled(&scroll(&care), Some("care"), "Appearance");
     let logs = page(
         "Activity",
         "The latest maintenance journal, loaded only when requested.",
@@ -481,9 +495,8 @@ fn build(app: &adw::Application) {
         badge.clone(),
     );
     refresh_button.connect_clicked(move |button| refresh(&n, &f, &l, &p, &b, button));
-    let parent = win.clone();
-    let toast_run = toast.clone();
-    run.connect_clicked(move|button|{let dialog=adw::MessageDialog::new(Some(&parent),Some("Run maintenance now?"),Some("This starts the existing maintenance engine. If automatic restart is enabled, a successful run may restart your computer after its warning. Save your work first."));dialog.add_responses(&[("cancel","Cancel"),("run","Run maintenance")]);dialog.set_response_appearance("run",adw::ResponseAppearance::Suggested);dialog.set_default_response(Some("cancel"));dialog.set_close_response("cancel");let (button,toast)=(button.clone(),toast_run.clone());dialog.connect_response(None,move|_,response|{if response=="run"{button.set_sensitive(false);let (button,toast)=(button.clone(),toast.clone());job(||privileged("run",None),move|r|{button.set_sensitive(true);toast.add_toast(adw::Toast::new(&match r{Ok(_)=>"Maintenance requested. Check Activity for progress.".into(),Err(e)=>e}));});}});dialog.present();});
+    let cleanup_stack = stack.clone();
+    run.connect_clicked(move |_| cleanup_stack.set_visible_child_name("cleanup"));
     win.set_content(Some(&outer));
     win.present();
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Install Tend over an existing dev-maintenance deployment; invoked through pkexec."""
-import json, os, pwd, re, shutil, subprocess
+import json, os, pwd, re, shutil, subprocess, sys
 from pathlib import Path
 if os.geteuid() != 0:
     raise SystemExit('Run scripts/install.sh as your desktop user.')
 os.umask(0o022)
+if Path('/etc/tend/integration-ready').exists():
+    os.execv(sys.executable, [sys.executable, str(Path(__file__).with_name('upgrade.py'))])
 root = Path(__file__).resolve().parents[1]
 uid = int(os.environ.get('PKEXEC_UID', os.environ.get('SUDO_UID', '-1')))
 if uid <= 0:
@@ -26,7 +28,7 @@ if '# Tend schedule integration' not in source:
     if (local.hour, local.minute) < (settings.get('hour', 8), settings.get('minute', 0)):
 ''', 1)
 compile(source, str(engine), 'exec')
-for binary in ['tend', 'tend-admin']:
+for binary in ['tend', 'tend-admin', 'tend-worker']:
     if not (root / 'target/release' / binary).is_file():
         raise SystemExit('Build the release binaries first.')
 if subprocess.run(['systemctl','is-active','--quiet','dev-maintenance.service']).returncode == 0:
@@ -42,7 +44,7 @@ def userctl(*args):
 if not manifest.exists():
     manifest.write_text(json.dumps({'uid':uid,'maintenance_enabled':subprocess.run(['systemctl','is-enabled','--quiet','dev-maintenance.timer']).returncode == 0,'maintenance_active':subprocess.run(['systemctl','is-active','--quiet','dev-maintenance.timer']).returncode == 0,'warnings': {str(n): userctl('is-enabled', f'dev-maintenance-warning-{n}.timer').returncode == 0 for n in [60,30,15]}}))
 engine.write_text(source)
-for name,target in [('tend','/usr/local/bin/tend'),('tend-admin','/usr/local/libexec/tend-admin')]:
+for name,target in [('tend','/usr/local/bin/tend'),('tend-admin','/usr/local/libexec/tend-admin'),('tend-worker','/usr/local/libexec/tend-worker')]:
     p=Path(target);p.parent.mkdir(parents=True,exist_ok=True)
     temporary=p.with_suffix('.new');shutil.copyfile(root/'target/release'/name, temporary);temporary.chmod(0o755);temporary.replace(p)
 for name,target in [('io.github.jtmb.Tend.policy','/usr/share/polkit-1/actions/io.github.jtmb.Tend.policy'),('io.github.jtmb.Tend.svg','/usr/local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg'),('io.github.jtmb.Tend.desktop','/usr/local/share/applications/io.github.jtmb.Tend.desktop')]:
