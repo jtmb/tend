@@ -551,6 +551,12 @@ fn main() -> glib::ExitCode {
             gtk::gio::ApplicationFlags::FLAGS_NONE
         })
         .build();
-    app.connect_activate(build);
+    app.connect_activate(|app| {
+        if let Some(window) = app.active_window() {
+            window.present();
+        } else {
+            build(app);
+        }
+    });
     app.run()
 }
