@@ -180,7 +180,44 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
                 target.set_text(&w::home().join(suffix).to_string_lossy());
             });
             body.append(&settings);
+            let validation = editor::Notice::new();
+            validation.root.set_widget_name("rule-validation");
+            body.append(&validation.root);
             d.set_extra_child(Some(&body));
+            // Keep invalid drafts in the editor instead of closing the modal
+            // and reporting validation failures on the page underneath it.
+            // Weak control references avoid keeping closed dialogs alive.
+            let validate: Rc<dyn Fn()> = Rc::new({
+                let (dialog, name, path, pattern, days, recurse, enabled) = (
+                    d.downgrade(), name.downgrade(), path.downgrade(),
+                    pattern.downgrade(), days.downgrade(), recurse.downgrade(),
+                    enabled.downgrade(),
+                );
+                move || {
+                    let (Some(dialog), Some(name), Some(path), Some(pattern),
+                         Some(days), Some(recurse), Some(enabled)) = (
+                        dialog.upgrade(), name.upgrade(), path.upgrade(),
+                        pattern.upgrade(), days.upgrade(), recurse.upgrade(),
+                        enabled.upgrade(),
+                    ) else { return };
+                    let rule = rules::Rule {
+                        name: name.text().into(), folder: PathBuf::from(path.text().as_str()),
+                        pattern: pattern.text().into(), days: days.value_as_int() as u32,
+                        recursive: recurse.is_active(), enabled: enabled.is_active(),
+                    };
+                    match rule.validate() {
+                        Ok(()) => { dialog.set_response_enabled("save", true); validation.root.set_visible(false); }
+                        Err(error) => { dialog.set_response_enabled("save", false); validation.show(&error, None, true); }
+                    }
+                }
+            });
+            for entry in [&name, &path, &pattern] {
+                let check = validate.clone();
+                entry.connect_changed(move |_| check());
+            }
+            let check = validate.clone();
+            days.connect_value_changed(move |_| check());
+            validate();
             let (policy, changed, rebuild, status) = (
                 policy.clone(),
                 changed.clone(),

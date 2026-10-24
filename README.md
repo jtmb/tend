@@ -73,7 +73,7 @@ Tend's manual cleanup and separate user cleanup schedules do not request a reboo
 
 ## Documentation & contributing
 
-[User guide](docs/USER_GUIDE.md) · [Implementation](docs/IMPLEMENTATION.md) · [Record the demo](docs/demo/README.md) · [Source](src/) · [Report an issue](https://github.com/jtmb/tend/issues)
+[User guide](docs/USER_GUIDE.md) · [Functional checks](docs/TESTING.md) · [Implementation](docs/IMPLEMENTATION.md) · [Record the demo](docs/demo/README.md) · [Source](src/) · [Report an issue](https://github.com/jtmb/tend/issues)
 
 Focused fixes and bug reports are welcome. Include your Ubuntu/GNOME versions, installation method and reproduction steps. Review logs before sharing; they can contain private paths and app names. Keep changes native, responsive and modest in resource use.
 

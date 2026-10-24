@@ -191,9 +191,11 @@ struct Ui {
     diagnostics: gtk::Label,
     quit: gtk::Button,
     end: gtk::Button,
+    export: gtk::Button,
 }
 impl Ui {
     fn update(&self, state: &State) {
+        self.export.set_sensitive(state.previous.is_some());
         let Some(s) = &state.previous else { return };
         let selected = self.selection.selected_item().map(|v| {
             let t = task(&v);
@@ -422,6 +424,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     table.sort_by_column(memory_column.as_ref(), gtk::SortType::Descending);
     let table_scroll = gtk::ScrolledWindow::builder()
         .child(&table)
+        .hscrollbar_policy(gtk::PolicyType::Always)
+        .overlay_scrolling(false)
+        .name("process-table-scroll")
         .vexpand(true)
         .hexpand(true)
         .min_content_height(240)
@@ -509,6 +514,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let refresh = gtk::Button::with_label("Refresh now");
     controls.insert(&refresh, -1);
     let export = gtk::Button::with_label("Export snapshot");
+    export.set_sensitive(false);
     controls.insert(&export, -1);
 
     let status = label(
@@ -536,6 +542,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         diagnostics,
         quit: quit.clone(),
         end: end.clone(),
+        export: export.clone(),
     });
     let data = state.clone();
     let key = selected.clone();
@@ -706,6 +713,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         let stack = stack.downgrade();
         let speed = speed.downgrade();
         let data = state.clone();
+        let export = export.clone();
         move || {
             if let Some(s) = source.borrow_mut().take() {
                 s.remove();
@@ -726,6 +734,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             if !active || minimized || stack.visible_child_name().as_deref() != Some("task-manager")
             {
                 data.borrow_mut().previous = None;
+                export.set_sensitive(false);
                 return;
             }
             tick();

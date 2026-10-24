@@ -10,6 +10,10 @@ default-run = "tend"
 # Documentation renderer only; excluded from installed/default builds.
 docs-demo = []
 
+[[example]]
+name = "qa-api"
+required-features = ["docs-demo"]
+
 [dependencies]
 gtk = { package = "gtk4", version = "0.10", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.8", features = ["v1_5"] }

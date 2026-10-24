@@ -301,6 +301,10 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     });
     start.connect_clicked(move |b| {
         cancelled.store(false, Ordering::Relaxed);
+        view.buffer().set_text("Working…");
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
         let progress = Arc::new(AtomicU64::new(0));
         let finished = Rc::new(Cell::new(false));
         let done = finished.clone();
@@ -382,7 +386,7 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                     }
                     Err(e) => {
                         status.set_text("Scan failed");
-                        view.buffer().set_text(&e);
+                        view.buffer().set_text(&format!("Could not complete operation:\n{e}"));
                     }
                 }
             },

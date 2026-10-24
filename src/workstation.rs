@@ -34,6 +34,21 @@ pub fn now() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+fn artifact_id() -> String {
+    // Keep separate exports/history entries even when a user clicks twice in
+    // one second, or two completed background actions report at the same time.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!(
+        "{}-{}-{:09}-{}",
+        time.as_secs(),
+        std::process::id(),
+        time.subsec_nanos(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
+}
 pub fn bytes(n: u64) -> String {
     let units = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = n as f64;
@@ -65,7 +80,7 @@ pub fn private_write(path: &Path, text: &str) -> Result<(), String> {
 pub fn record(kind: &str, text: &str) -> Result<(), String> {
     let dir = state_dir().join("reports");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("{}-{}-{}.json", now(), std::process::id(), kind));
+    let path = dir.join(format!("{}-{kind}.json", artifact_id()));
     private_write(
         &path,
         &serde_json::to_string_pretty(
@@ -992,9 +1007,8 @@ pub fn export_report(text: &str, json: bool) -> Result<String, String> {
     let dir = home().join("Documents/Tend reports");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let p = dir.join(format!(
-        "report-{}-{}.{}",
-        now(),
-        std::process::id(),
+        "report-{}.{}",
+        artifact_id(),
         if json { "json" } else { "txt" }
     ));
     let body = if json {
@@ -1065,6 +1079,14 @@ pub fn run_with_input(program: &str, args: &[&str], input: &str) -> Result<Strin
 mod boundary_tests {
     use super::*;
     use std::os::unix::{ffi::OsStrExt, fs::symlink};
+    #[test]
+    fn repeated_report_ids_are_unique_even_with_parallel_completions() {
+        let threads: Vec<_> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..100).map(|_| artifact_id()).collect::<Vec<_>>()))
+            .collect();
+        let ids: Vec<_> = threads.into_iter().flat_map(|t| t.join().unwrap()).collect();
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
+    }
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {

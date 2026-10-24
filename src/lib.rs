@@ -53,12 +53,29 @@ pub fn output(program: &str, args: &[&str]) -> Result<String, String> {
     if result.status.success() {
         Ok(String::from_utf8_lossy(&result.stdout).trim().into())
     } else {
-        Err(String::from_utf8_lossy(&result.stderr).trim().to_string())
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let detail = if !stderr.trim().is_empty() {
+            stderr.trim()
+        } else {
+            stdout.trim()
+        };
+        Err(if detail.is_empty() {
+            format!("{program} failed ({})", result.status)
+        } else {
+            detail.to_owned()
+        })
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn command_failures_never_return_an_empty_error() {
+        let error = output("/usr/bin/false", &[]).unwrap_err();
+        assert!(error.contains("/usr/bin/false") && error.contains("status"));
+        assert_eq!(output("/bin/sh", &["-c", "printf 'fixture diagnostic'; exit 1"]).unwrap_err(), "fixture diagnostic");
+    }
     #[test]
     fn midnight_warnings_wrap() {
         let s = Settings {

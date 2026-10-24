@@ -30,8 +30,7 @@ fn run() -> Result<(), String> {
             let _lock = tend::cleanup_rules::cleanup_lock()?;
             match phase.as_str() {
                 "npm-cache" if policy.npm_verify => {
-                    let npm = w::home().join(".opencode/bin/npm");
-                    println!("{}", tend::output(npm.to_str().ok_or("Invalid npm path")?, &["cache", "verify"])?);
+                    println!("{}", w::verify_npm()?);
                 }
                 "npm-logs" => {
                     policy.user_phase(&phase)?;

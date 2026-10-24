@@ -180,6 +180,25 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     search.connect_search_changed(move |_| f());
     let f = filter.clone();
     priority.connect_selected_notify(move |_| f());
+    // Source/time controls describe the next query. Do not leave a report from
+    // the previous query under those controls or allow it to be exported.
+    let invalidate: Rc<dyn Fn()> = Rc::new({
+        let (entries, filter, title, description, status, notice) = (
+            entries.clone(), filter.clone(), empty_title.clone(),
+            empty_description.clone(), status.clone(), notice.clone(),
+        );
+        move || {
+            entries.borrow_mut().clear();
+            filter();
+            notice.root.set_visible(false);
+            title.set_text("Choose logs to inspect");
+            description.set_text("Select Load logs to read this source and time range.");
+            status.set_text("Source or time range changed. Select Load logs to refresh.");
+        }
+    });
+    let changed = invalidate.clone();
+    source.connect_selected_notify(move |_| changed());
+    period.connect_selected_notify(move |_| invalidate());
     let data = entries;
     let f = filter;
     let src = source.clone();
@@ -188,6 +207,10 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let loading_results = results.clone();
     let loading_title = empty_title.clone();
     let loading_description = empty_description.clone();
+    let query_controls: Vec<gtk::Widget> = vec![
+        source.clone().upcast(), period.clone().upcast(),
+        priority.clone().upcast(), search.clone().upcast(), crashes.clone().upcast(),
+    ];
     load.connect_clicked(move |b| {
         let (b, data, f, st, notice, error_title, error_description) = (
             b.clone(),
@@ -198,6 +221,12 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             loading_title.clone(),
             loading_description.clone(),
         );
+        data.borrow_mut().clear();
+        f();
+        for control in &query_controls {
+            control.set_sensitive(false);
+        }
+        let query_controls = query_controls.clone();
         notice.root.set_visible(false);
         loading_title.set_text("Loading logs…");
         loading_description
@@ -210,6 +239,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             move || logs::load(source, period, 1000),
             move |result| {
                 b.set_sensitive(true);
+                for control in &query_controls {
+                    control.set_sensitive(true);
+                }
                 match result.and_then(|s| {
                     serde_json::from_str::<Vec<logs::Entry>>(&s).map_err(|e| e.to_string())
                 }) {
