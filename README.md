@@ -26,14 +26,15 @@
 
 - **Developer maintenance** — Docker cache and log reporting, npm cache verification and Python cache review.
 - **Desktop & memory controls** — login applications, animations, Wayland launcher overrides, swappiness and future-boot zram settings. Supported changes can be restored through Recovery.
-- **Independent cleanup policies** — separate daily-maintenance and manual/cron settings, with explicit save/discard, preview invalidation and visible policy errors.
+- **Independent cleanup policies** — separate daily-maintenance and manual/cron settings, with a persistent Save changes / Discard footer, preview invalidation and readable policy errors.
 - **Cleanup schedules** — daily, weekly or custom cron schedules, missed-run catch-up and saved results. New schedules start disabled.
+- **Top-panel access** — open Tend or quit from its panel icon. Close the window to keep it available without a dock window.
 
 ### Small by design
 
 Real GTK widgets, with no embedded browser, telemetry or advertising. Opening Tend does not start a folder scan, Docker query or package refresh. Task Manager samples every two seconds by default while selected and focused; collection pauses when you leave it. Process lists are virtualized, charts keep 60 samples and log reads are bounded.
 
-The title-bar close button can keep Tend in the dock. **Quit Tend**, dock Quit and Alt+F4 exit the app. Scheduled maintenance runs independently of the window.
+The title-bar close button can keep Tend in Ubuntu’s top panel. Its menu offers **Open Tend** and **Quit Tend**. If no panel host is available, closing minimizes to the dock. **Quit Tend**, dock Quit and Alt+F4 always exit; live collection pauses when hidden. Scheduled maintenance runs independently of the window.
 
 ## Install
 
@@ -50,7 +51,7 @@ cd tend
 
 Daily policy editing requires the [cleanup integration update](docs/USER_GUIDE.md#daily-policy-integration) on existing installations. The editor shows its status; routine interface installation does not replace the system helper.
 
-Open **Tend** from the application launcher and pin it to your dock. Routine interface updates do not invoke sudo or pkexec. See the [user guide](docs/USER_GUIDE.md) for helper authorization and recovery.
+Open **Tend** from the application launcher; its icon stays in the top panel while it is running. Routine interface updates do not invoke sudo or pkexec. See the [user guide](docs/USER_GUIDE.md) for helper authorization and recovery.
 
 <details>
 <summary>Updating an existing installation</summary>

@@ -54,6 +54,8 @@ set `TEND_QA_DIR="$demo_dir/qa"` as well as `TEND_DEMO_DIR` to run the native
 interaction checks instead of GIF recording. This mode intentionally edits only
 the fixture policy files: save/reload, discard, unsaved defaults, stale previews,
 independent policies, confirmation cancellation, and malformed-file errors.
+Set `TEND_QA_STATE_ONLY=1` for a focused replay of interactions and error states
+after a complete matrix run.
 It captures all 15 pages at desktop/dark and narrow/light sizes, both cleanup
 page bottoms, and the rule/confirmation/error states. It exits the separate
 preview through the real Quit action. No cleanup, updates, cron save, system
@@ -65,3 +67,31 @@ Do not reuse this intentionally corrupted QA home for the public demo.
 test by default. It is marked ignored because preview-only verification must
 retain fixtures. Daily-runner command tests use mocks; they never spawn the
 listed maintenance commands. Python checks: `python3 -m unittest discover -s tests -v`.
+
+## Complete design matrix and panel checks
+
+After building with `docs-demo`, these helpers create a fresh fixture per invocation
+and retain every input and capture:
+
+```sh
+python3 docs/demo/design-checks.py matrix
+python3 docs/demo/design-checks.py accessibility
+python3 docs/demo/design-checks.py panel
+python3 docs/demo/design-checks.py gallery
+python3 docs/demo/design-checks.py demo
+```
+
+The matrix renders every page at 720, 960 and 1280 window pixels in both themes
+(client captures exclude window shadows). It checks footer bounds, real keyboard
+traversal, defaults/discard, failed manual and cron saves, Appearance rollback,
+lossless daily/weekly/custom cron initialization and existing cleanup guards.
+Shared-footer test adapters cover saving, success, failure, invalid and unavailable
+states without a system write. Cron writes are explicitly blocked in this build.
+Accessibility captures cover all four editors at 200% device scale, 135% text size
+and native high contrast, light and dark. Adjacent JSON records the actual scale,
+DPI, contrast mode and footer visibility. These are process-local settings.
+
+The panel check uses a private bus with **no service activation directories**.
+A fake host inspects Tend's real StatusNotifierItem and DBusMenu objects, observes
+the actual Close button hiding the preview, opens it through the menu, then proves
+Quit exits that preview process. It never touches the user's session bus.

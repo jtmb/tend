@@ -237,7 +237,7 @@ pub fn apply(p: &Policy) -> Result<String, String> {
         Ok(text)
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Schedule {
     pub enabled: bool,
@@ -368,6 +368,26 @@ pub fn managed_crontab(old: &str, block: &str) -> Result<String, String> {
     Ok(text)
 }
 impl Schedule {
+    /// Only exact numeric daily/weekly schedules have a simple editor. Preserve
+    /// all other expressions verbatim; this method never changes the schedule.
+    pub fn simple_time(&self) -> Option<(u32, u32, u32, u32)> {
+        let parts: Vec<_> = self.expression.split_whitespace().collect();
+        if parts.len() != 5 || parts[2] != "*" || parts[3] != "*" {
+            return None;
+        }
+        let minute = parts[0].parse::<u32>().ok().filter(|n| *n < 60)?;
+        let hour = parts[1].parse::<u32>().ok().filter(|n| *n < 24)?;
+        if parts[4] == "*" {
+            Some((0, hour, minute, 0))
+        } else {
+            Some((
+                1,
+                hour,
+                minute,
+                parts[4].parse::<u32>().ok().filter(|n| *n <= 6)?,
+            ))
+        }
+    }
     pub fn load() -> Result<Self, String> {
         match fs::read_to_string(w::home().join(".config/tend/cleanup-schedule.json")) {
             Ok(s) => serde_json::from_str(&s).map_err(|e| e.to_string()),
@@ -548,6 +568,28 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn simple_cron_editor_is_lossless_and_conservative() {
+        for (expression, expected) in [
+            ("0 10 * * *", Some((0, 10, 0, 0))),
+            ("05 08 * * 4", Some((1, 8, 5, 4))),
+            ("59 23 * * 0", Some((1, 23, 59, 0))),
+            ("*/15 8-18 * * 1-5", None),
+            ("0 10 1 * *", None),
+            ("0 10 * 2 *", None),
+            ("60 10 * * *", None),
+            ("0 24 * * *", None),
+            ("0 10 * * 7", None),
+            ("0 10 * * MON", None),
+        ] {
+            let s = Schedule {
+                expression: expression.into(),
+                ..Default::default()
+            };
+            assert_eq!(s.simple_time(), expected, "{expression}");
+            assert_eq!(s.expression, expression);
+        }
+    }
     #[test]
     fn cron_rejects_commands_and_bad_ranges() {
         for e in [

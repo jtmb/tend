@@ -24,6 +24,13 @@ fn action(
         .as_ref()
         .compute_bounds(outer)
         .expect("Mapped action target");
+    assert!(
+        rect.x() >= 0.
+            && rect.y() >= 0.
+            && rect.x() + rect.width() <= outer.width() as f32
+            && rect.y() + rect.height() <= outer.height() as f32,
+        "Off-screen demo target: {name}"
+    );
     trace.push(json!({"frame":frame,"name":name,
         "x":rect.x()+rect.width()/2.,"y":rect.y()+rect.height()/2.}));
 }
@@ -58,7 +65,10 @@ fn page(stack: &gtk::Stack, name: &str) -> Widget {
     stack.child_by_name(name).expect("Demo page exists")
 }
 fn bottom(stack: &gtk::Stack, name: &str) {
-    if let Some(scroll) = page(stack, name).downcast_ref::<gtk::ScrolledWindow>() {
+    if let Some(scroll) = descendants(&page(stack, name))
+        .into_iter()
+        .find_map(|w| w.downcast::<gtk::ScrolledWindow>().ok())
+    {
         let adjustment = scroll.vadjustment();
         adjustment.set_value(adjustment.upper() - adjustment.page_size());
     }
@@ -168,6 +178,7 @@ pub fn record(
                     "Preview did not produce the expected real file inventory: {report}"
                 );
                 evidence.push(json!({"frame":frame,"preview":report}));
+                bottom(&stack, "cleanup");
                 // Show the actual eligible filenames in the native report view.
                 for w in descendants(&page(&stack, "cleanup")) {
                     if let Some(view) = w.downcast_ref::<gtk::TextView>() {
@@ -282,6 +293,179 @@ pub fn record(
     });
 }
 
+fn design_initial_checks(outer: &gtk::Box, stack: &gtk::Stack) {
+    for id in ["cleanup", "daily-cleanup", "cleanup-scheduling", "schedule"] {
+        let root = page(stack, id);
+        assert_eq!(root.widget_name(), "editor-page");
+        let save = button(&root, "Save changes");
+        assert!(!save.is_sensitive(), "Unchanged {id} can save");
+        assert!(!button(&root, "Discard changes").is_sensitive());
+        assert!(save.ancestor(adw::HeaderBar::static_type()).is_none());
+        assert!(descendants(&root)
+            .iter()
+            .any(|w| w.widget_name() == "editor-footer"));
+    }
+    for w in descendants(outer) {
+        if let Some(header) = w.downcast_ref::<adw::HeaderBar>() {
+            assert!(!text(header).contains("Save changes"));
+        }
+    }
+    let schedule = page(stack, "cleanup-scheduling");
+    let mode = descendants(&schedule)
+        .into_iter()
+        .find_map(|w| w.downcast::<gtk::DropDown>().ok())
+        .unwrap();
+    assert_eq!(mode.selected(), 0, "Default cron must display as Daily");
+    assert!(text(&page(stack, "daily-cleanup")).contains("System integration update required"));
+    assert!(text(&schedule).contains("Using effective defaults"));
+    // Render saved weekly and complex expressions through the real editor.
+    // These are fixture JSON files only, never installed cron jobs.
+    let config = tend::workstation::home().join(".config/tend/cleanup-schedule.json");
+    for (i, expression, mode_expected, h, m, weekday) in [
+        (0, "05 08 * * 4", 1, 8, 5, 4),
+        (1, "*/15 8-18 * * 1-5", 2, 10, 0, 0),
+        (2, "00  09 * * *", 0, 9, 0, 0),
+    ] {
+        fs::write(
+            &config,
+            serde_json::to_string(&tend::cleanup_rules::Schedule {
+                expression: expression.into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        stack.remove(&page(stack, "cleanup-scheduling"));
+        crate::cleanup_ui::schedule_page(stack);
+        let cron = page(stack, "cleanup-scheduling");
+        let drops = descendants(&cron)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk::DropDown>().ok())
+            .collect::<Vec<_>>();
+        let spins = descendants(&cron)
+            .into_iter()
+            .filter_map(|w| w.downcast::<gtk::SpinButton>().ok())
+            .collect::<Vec<_>>();
+        assert_eq!(drops[0].selected(), mode_expected);
+        assert_eq!(drops[1].selected(), weekday);
+        assert_eq!((spins[0].value_as_int(), spins[1].value_as_int()), (h, m));
+        let toggle = descendants(&cron)
+            .into_iter()
+            .find_map(|w| w.downcast::<gtk::Switch>().ok())
+            .unwrap();
+        toggle.set_active(true);
+        assert!(button(&cron, "Save changes").is_sensitive());
+        button(&cron, "Discard changes").emit_clicked();
+        assert!(!button(&cron, "Save changes").is_sensitive());
+        assert_eq!(
+            tend::cleanup_rules::Schedule::load().unwrap().expression,
+            expression
+        );
+        fs::rename(&config, config.with_extension(format!("qa-case-{i}"))).unwrap();
+    }
+    stack.remove(&page(stack, "cleanup-scheduling"));
+    crate::cleanup_ui::schedule_page(stack);
+    // The exact footer used by all four editors, with simulated completion. No
+    // storage adapter, cron command or system helper is involved in these states.
+    let footer = crate::editor::Footer::new(true, true, None);
+    assert!(!footer.save.is_sensitive());
+    footer.sync(true, true);
+    assert!(footer.save.is_sensitive());
+    assert!(footer.discard.is_sensitive());
+    footer.saving();
+    assert!(!footer.save.is_sensitive());
+    assert!(!footer.discard.is_sensitive());
+    footer.error("Injected permission failure");
+    assert!(footer.save.is_sensitive());
+    assert!(text(&footer.root).contains("draft is preserved"));
+    footer.success();
+    assert!(!footer.save.is_sensitive());
+    assert!(text(&footer.root).contains("Saved"));
+    footer.sync(true, false);
+    assert!(!footer.save.is_sensitive());
+    let unavailable = crate::editor::Footer::new(false, true, Some("Test helper unavailable"));
+    unavailable.sync(true, true);
+    assert!(!unavailable.save.is_sensitive());
+    assert!(unavailable.discard.is_sensitive());
+    // Appearance: force rename failures only inside the fresh fixture home.
+    let care = page(stack, "care");
+    let theme = descendants(&care)
+        .into_iter()
+        .find_map(|w| w.downcast::<gtk::DropDown>().ok())
+        .unwrap();
+    let path = gtk::glib::user_config_dir().join("tend/theme");
+    let previous = theme.selected();
+    if path.exists() {
+        fs::rename(&path, path.with_extension("qa-backup")).unwrap();
+    }
+    fs::create_dir(&path).unwrap();
+    theme.set_selected((previous + 1) % 3);
+    assert_eq!(
+        theme.selected(),
+        previous,
+        "Theme failure must restore previous control"
+    );
+    assert!(text(&care).contains("previous preference was restored"));
+    fs::rename(&path, path.with_extension("qa-failed-target")).unwrap();
+    if path.with_extension("qa-backup").exists() {
+        fs::rename(path.with_extension("qa-backup"), &path).unwrap();
+    }
+    theme.set_selected((previous + 1) % 3);
+    theme.set_selected(previous);
+    let toggle = descendants(&care)
+        .into_iter()
+        .find_map(|w| w.downcast::<gtk::Switch>().ok())
+        .unwrap();
+    let path = gtk::glib::user_config_dir().join("tend/background");
+    let previous = toggle.is_active();
+    if path.exists() {
+        fs::rename(&path, path.with_extension("qa-backup")).unwrap();
+    }
+    fs::create_dir(&path).unwrap();
+    toggle.set_active(!previous);
+    assert_eq!(
+        toggle.is_active(),
+        previous,
+        "Close preference failure must restore previous value"
+    );
+    fs::rename(&path, path.with_extension("qa-failed-target")).unwrap();
+    if path.with_extension("qa-backup").exists() {
+        fs::rename(path.with_extension("qa-backup"), &path).unwrap();
+    }
+    toggle.set_active(!previous);
+    toggle.set_active(previous);
+    // A draft survives navigating away, and Discard writes neither policy.
+    let m = page(stack, "schedule");
+    let hour = descendants(&m)
+        .into_iter()
+        .find_map(|w| w.downcast::<gtk::SpinButton>().ok())
+        .unwrap();
+    let before = hour.value_as_int();
+    hour.set_value(((before + 1) % 24) as f64);
+    stack.set_visible_child_name("schedule");
+    stack.set_visible_child_name("care");
+    stack.set_visible_child_name("schedule");
+    assert_eq!(hour.value_as_int(), (before + 1) % 24);
+    button(&m, "Discard changes").emit_clicked();
+    assert_eq!(hour.value_as_int(), before);
+    // Empty/report/loading/error use the actual shared report state widget.
+    let parent = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let report = crate::workbench::text_panel(&parent);
+    let states = report
+        .ancestor(gtk::Stack::static_type())
+        .and_downcast::<gtk::Stack>()
+        .unwrap();
+    assert_eq!(states.visible_child_name().as_deref(), Some("empty"));
+    report.buffer().set_text("Working…");
+    assert_eq!(states.visible_child_name().as_deref(), Some("loading"));
+    report.buffer().set_text("Collected diagnostic output");
+    assert_eq!(states.visible_child_name().as_deref(), Some("report"));
+    report
+        .buffer()
+        .set_text("Could not complete operation: injected error");
+    assert_eq!(states.visible_child_name().as_deref(), Some("error"));
+}
+
 /// Isolated native interaction checks and a complete page contact sheet.
 /// Never activates cleanup, system saves, schedules, updates or process actions.
 pub fn qa(
@@ -321,8 +505,16 @@ pub fn qa(
         "schedule",
         "activity",
     ];
+    design_initial_checks(&outer, &stack);
+    let matrix_count = if std::env::var_os("TEND_QA_STATE_ONLY").is_some() {
+        0
+    } else {
+        pages.len() * 6
+    };
     let mut tick = 0usize;
-    let mut evidence = vec![];
+    let mut evidence = vec![
+        json!({"shared_footer_states":true,"appearance_failure_rollback":true,"cron_daily_initialization":true,"navigation_preserves_drafts":true,"report_states":true}),
+    ];
     glib::timeout_add_local(Duration::from_millis(250), move || {
         tick += 1;
         match tick {
@@ -343,7 +535,18 @@ pub fn qa(
             }
             3 => {
                 spins[3].set_value(45.);
-                button(&root, "Save policy").emit_clicked();
+                let save = button(&root, "Save changes");
+                let mut reached = false;
+                for _ in 0..80 {
+                    root.child_focus(gtk::DirectionType::TabForward);
+                    if save.has_focus() {
+                        reached = true;
+                        break;
+                    }
+                }
+                assert!(reached, "Save footer cannot be reached with Tab");
+                save.emit_clicked();
+                evidence.push(json!({"keyboard_save_reachable":true}));
                 assert_eq!(tend::workstation::Cleanup::load().unwrap().npm_log_days, 45);
                 evidence.push(json!({"save_reload":45}));
             }
@@ -384,25 +587,103 @@ pub fn qa(
                 assert_eq!(tend::workstation::Cleanup::load().unwrap().keep_gb, 5);
                 evidence.push(json!({"independent_policies":true}));
                 button(&daily, "Discard changes").emit_clicked();
+                assert!(
+                    !text(&daily).contains("12GB"),
+                    "Discard left a stale daily preview"
+                );
+                let cron = page(&stack, "cleanup-scheduling");
+                button(&cron, "Preview schedule").emit_clicked();
+                descendants(&cron)
+                    .into_iter()
+                    .find_map(|w| w.downcast::<gtk::SpinButton>().ok())
+                    .unwrap()
+                    .set_value(11.);
+            }
+            14 => {
+                // Force a local policy-save failure without touching any original
+                // fixture input. Restore the pathname afterward; keep artifacts.
+                assert!(text(&page(&stack, "cleanup-scheduling"))
+                    .contains("Schedule changed while the preview was running"));
+                evidence.push(json!({"stale_daily_and_cron_previews_rejected":true}));
+                let path = tend::workstation::home().join(".config/tend/cleanup.json");
+                fs::rename(&path, path.with_extension("qa-backup")).unwrap();
+                fs::create_dir(&path).unwrap();
+                spins[3].set_value(47.);
+                button(&root, "Save changes").emit_clicked();
+                assert!(text(&root).contains("draft is preserved"));
+                assert_eq!(spins[3].value_as_int(), 47);
+                button(&root, "Discard changes").emit_clicked();
+                assert_eq!(spins[3].value_as_int(), 45);
+                fs::rename(&path, path.with_extension("qa-failed-target")).unwrap();
+                fs::rename(path.with_extension("qa-backup"), &path).unwrap();
+                let cron = page(&stack, "cleanup-scheduling");
+                let enabled = descendants(&cron)
+                    .into_iter()
+                    .find_map(|w| w.downcast::<gtk::Switch>().ok())
+                    .unwrap();
+                enabled.set_active(true);
+                button(&cron, "Save changes").emit_clicked();
+                evidence.push(json!({"manual_failure_keeps_draft":true}));
+            }
+            15 => {
+                let cron = page(&stack, "cleanup-scheduling");
+                assert!(text(&cron).contains("draft is preserved"));
+                button(&cron, "Discard changes").emit_clicked();
+                assert!(!button(&cron, "Save changes").is_sensitive());
+                assert!(!tend::workstation::home()
+                    .join(".config/tend/cleanup-schedule.json")
+                    .exists());
+                evidence.push(
+                    json!({"cron_failure_keeps_draft":true,"cron_discard_does_not_write":true}),
+                );
             }
             _ => {}
         }
         if tick >= 16 {
             let frame = tick - 16;
             let index = frame / 4;
-            if index < pages.len() * 2 {
+            if index < matrix_count {
                 let id = pages[index % pages.len()];
                 if frame % 4 == 0 {
                     assert!(stack.child_by_name(id).is_some(), "QA page missing: {id}");
                     stack.set_visible_child_name(id);
-                    adw::StyleManager::default().set_color_scheme(if index < pages.len() {
-                        adw::ColorScheme::ForceDark
-                    } else {
-                        adw::ColorScheme::ForceLight
-                    });
-                    win.set_default_size(if index < pages.len() { 1100 } else { 820 }, 760);
+                    adw::StyleManager::default().set_color_scheme(
+                        if (index / pages.len()) % 2 == 0 {
+                            adw::ColorScheme::ForceDark
+                        } else {
+                            adw::ColorScheme::ForceLight
+                        },
+                    );
+                    win.set_default_size([720, 960, 1280][index / (pages.len() * 2)], 760);
                 }
                 if frame % 4 == 3 {
+                    let navigation = descendants(&outer)
+                        .into_iter()
+                        .find_map(|w| w.downcast::<adw::OverlaySplitView>().ok())
+                        .unwrap();
+                    assert_eq!(navigation.is_collapsed(), outer.width() < 860);
+                    assert_eq!(
+                        navigation.shows_sidebar(),
+                        outer.width() >= 860,
+                        "Desktop navigation must remain visible"
+                    );
+                    let root = page(&stack, id);
+                    if root.widget_name() == "editor-page" {
+                        let save = button(&root, "Save changes");
+                        let bounds = save.compute_bounds(&outer).unwrap();
+                        assert!(
+                            bounds.y() >= 0.
+                                && bounds.y() + bounds.height() <= outer.height() as f32,
+                            "Unreachable footer on {id}"
+                        );
+                        assert!(
+                            bounds.x() >= 0. && bounds.x() + bounds.width() <= outer.width() as f32,
+                            "Clipped footer on {id}"
+                        );
+                        assert!(save.is_mapped());
+                        evidence.push(json!({"page":id,"footer_in_view":true}));
+                    }
+                    evidence.push(json!({"page":id,"width":outer.width(),"height":outer.height(),"theme":if (index/pages.len())%2==0 {"dark"} else {"light"}}));
                     let snapshot = gtk::Snapshot::new();
                     paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
                     let texture = win
@@ -412,9 +693,24 @@ pub fn qa(
                     texture
                         .save_to_png(directory.join(format!("{:02}-{id}.png", index)))
                         .unwrap();
+                    if index == 0 {
+                        let toggle = descendants(&outer)
+                            .into_iter()
+                            .find(|w| w.widget_name() == "navigation-toggle")
+                            .unwrap()
+                            .downcast::<gtk::ToggleButton>()
+                            .unwrap();
+                        toggle.set_active(true);
+                        assert!(navigation.shows_sidebar());
+                        button(&outer, "Maintenance").emit_clicked();
+                        assert_eq!(stack.visible_child_name().as_deref(), Some("schedule"));
+                        assert!(!navigation.shows_sidebar());
+                        stack.set_visible_child_name(id);
+                        evidence.push(json!({"compact_navigation_opens_selects_and_closes":true}));
+                    }
                 }
-            } else if index < pages.len() * 2 + 4 {
-                let i = index - pages.len() * 2;
+            } else if index < matrix_count + 4 {
+                let i = index - matrix_count;
                 let id = if i < 2 { "cleanup" } else { "daily-cleanup" };
                 if frame % 4 == 0 {
                     stack.set_visible_child_name(id);
@@ -434,8 +730,8 @@ pub fn qa(
                         .save_to_png(directory.join(format!("bottom-{i}-{id}.png")))
                         .unwrap();
                 }
-            } else if index < pages.len() * 2 + 9 {
-                let scenario = index - pages.len() * 2 - 4;
+            } else if index < matrix_count + 9 {
+                let scenario = index - matrix_count - 4;
                 if frame % 4 == 0 {
                     match scenario {
                         0 => {
@@ -447,7 +743,8 @@ pub fn qa(
                             )
                             .unwrap();
                             stack.set_visible_child_name("cleanup");
-                            button(&root, "Save policy").emit_clicked();
+                            spins[3].set_value(46.);
+                            button(&root, "Save changes").emit_clicked();
                         }
                         1 => {
                             button(&root, "Add rule…").emit_clicked();
@@ -518,7 +815,26 @@ pub fn qa(
                         } else {
                             "cleanup"
                         };
-                        assert!(text(&page(&stack, id)).contains("Cannot load"));
+                        if scenario == 2 {
+                            let message = descendants(&page(&stack, id))
+                                .into_iter()
+                                .filter_map(|w| w.downcast::<gtk::Label>().ok())
+                                .find(|l| l.text().starts_with("Cannot load policy."))
+                                .unwrap();
+                            let bounds = message.compute_bounds(&outer).unwrap();
+                            assert!(
+                                bounds.y() >= 0.
+                                    && bounds.y() + bounds.height() < outer.height() as f32,
+                                "Load error is buried below the form"
+                            );
+                            assert!(message.has_css_class("error"));
+                            assert!(!message.has_css_class("caption"));
+                            evidence.push(json!({"policy_error_visible_above_form":true}));
+                        }
+                        assert!(
+                            text(&page(&stack, id)).contains("Cannot load")
+                                || text(&page(&stack, id)).contains("need attention")
+                        );
                         evidence.push(json!({"invalid_file_visible":scenario}));
                     }
                 }
@@ -534,4 +850,106 @@ pub fn qa(
         }
         glib::ControlFlow::Continue
     });
+}
+
+/// Controlled by a fake panel host on a private dbus-run-session bus only.
+pub fn panel_qa(
+    win: &adw::ApplicationWindow,
+    outer: &gtk::Box,
+    ready: std::rc::Rc<std::cell::Cell<bool>>,
+    path: &str,
+) {
+    let (win, outer, path) = (win.clone(), outer.clone(), Path::new(path).to_owned());
+    let mut stage = 0;
+    let mut ticks = 0;
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        ticks += 1;
+        assert!(ticks < 250, "Panel host did not complete its smoke test");
+        if stage == 0 && ready.get() {
+            let close = descendants(&outer)
+                .into_iter()
+                .find(|w| w.widget_name() == "window-close")
+                .unwrap()
+                .downcast::<gtk::Button>()
+                .unwrap();
+            close.emit_clicked();
+            assert!(
+                !win.is_visible(),
+                "Panel close must hide instead of minimize"
+            );
+            fs::write(&path, r#"{"closed_to_panel":true}"#).unwrap();
+            stage = 1;
+        } else if stage == 1 && win.is_visible() {
+            fs::write(
+                &path,
+                r#"{"closed_to_panel":true,"reopened_from_menu":true}"#,
+            )
+            .unwrap();
+            stage = 2;
+        } else if stage == 2 {
+            let close = descendants(&outer)
+                .into_iter()
+                .find(|w| w.widget_name() == "window-close")
+                .unwrap()
+                .downcast::<gtk::Button>()
+                .unwrap();
+            close.emit_clicked();
+            assert!(!win.is_visible());
+            fs::write(
+                &path,
+                r#"{"closed_to_panel":true,"reopened_from_menu":true,"closed_again":true}"#,
+            )
+            .unwrap();
+            stage = 3;
+        } else if stage == 3 && win.is_visible() {
+            fs::write(&path, r#"{"closed_to_panel":true,"reopened_from_menu":true,"closed_again":true,"recovered_host_loss":true}"#).unwrap();
+            stage = 4;
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+pub fn validate_capture(outer: &gtk::Box, stack: &gtk::Stack, path: &str) {
+    let root = stack.visible_child().unwrap();
+    let mut footer_visible = None;
+    if root.widget_name() == "editor-page" {
+        for name in ["Save changes", "Discard changes"] {
+            let action = button(&root, name);
+            let bounds = action.compute_bounds(outer).unwrap();
+            assert!(
+                bounds.x() >= 0.
+                    && bounds.y() >= 0.
+                    && bounds.x() + bounds.width() <= outer.width() as f32
+                    && bounds.y() + bounds.height() <= outer.height() as f32,
+                "Clipped {name} in {path}"
+            );
+        }
+        footer_visible = Some(true);
+    }
+    let toggle = descendants(outer)
+        .into_iter()
+        .find(|w| w.widget_name() == "navigation-toggle")
+        .unwrap();
+    assert_eq!(
+        toggle.is_visible(),
+        outer.width() < 860,
+        "Navigation breakpoint mismatch"
+    );
+    let navigation = descendants(outer)
+        .into_iter()
+        .find_map(|w| w.downcast::<adw::OverlaySplitView>().ok())
+        .unwrap();
+    assert_eq!(navigation.is_collapsed(), outer.width() < 860);
+    assert_eq!(
+        navigation.shows_sidebar(),
+        outer.width() >= 860,
+        "Desktop navigation must remain visible"
+    );
+    let settings = gtk::Settings::default().unwrap();
+    let report = json!({"page":stack.visible_child_name().map(|s|s.to_string()),"logical_width":outer.width(),"logical_height":outer.height(),"scale":outer.scale_factor(),"text_dpi":settings.property::<i32>("gtk-xft-dpi"),"high_contrast":adw::StyleManager::default().is_high_contrast(),"footer_in_view":footer_visible});
+    fs::write(
+        Path::new(path).with_extension("json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
 }

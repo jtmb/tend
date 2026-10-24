@@ -22,6 +22,7 @@ if not helper.is_file() or not os.access(helper, os.X_OK) or helper.stat().st_ui
 files = {
     home / 'scripts/tend': (source.read_bytes(), 0o755),
     home / 'scripts/tend-worker': ((root/'target/release/tend-worker').read_bytes(), 0o755),
+    home / '.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend-symbolic.svg': ((root/'assets/io.github.jtmb.Tend-symbolic.svg').read_bytes(), 0o644),
     home / '.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg': ((root/'assets/io.github.jtmb.Tend.svg').read_bytes(), 0o644),
 }
 binary = home / 'scripts/tend'

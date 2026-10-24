@@ -2,7 +2,10 @@ mod cleanup_policy_ui;
 mod cleanup_ui;
 #[cfg(feature = "docs-demo")]
 mod docs_demo;
+mod editor;
 mod log_reader;
+mod maintenance_ui;
+mod panel;
 mod task_manager;
 mod workbench;
 use adw::prelude::*;
@@ -14,7 +17,7 @@ use std::{
     sync::mpsc,
     time::Duration,
 };
-use tend::{output, presentation as dates, Settings};
+use tend::{output, presentation as dates};
 const ID: &str = "io.github.jtmb.Tend";
 fn label(text: &str, class: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
@@ -87,17 +90,21 @@ where
         }
     });
 }
-fn privileged(action: &str, data: Option<String>) -> Result<String, String> {
-    #[cfg(feature = "docs-demo")]
-    if std::env::var_os("TEND_DEMO_DIR").is_some() {
-        return Err("Privileged actions are disabled in documentation recordings.".into());
-    }
+fn administrator_available() -> Result<(), String> {
     // Never ask a desktop agent to authenticate. The installed rule grants this
     // helper only; installation or missing authorization is a separate handoff.
     output("/usr/bin/pkcheck", &["--action-id", "io.github.jtmb.Tend.manage",
         "--process", &std::process::id().to_string(), "--detail", "program",
         "/usr/local/libexec/tend-admin"])
         .map_err(|_| "Tend administrator authorization is unavailable. No password prompt was opened. Complete the documented helper setup to enable this action.".to_string())?;
+    Ok(())
+}
+fn privileged(action: &str, data: Option<String>) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Privileged actions are disabled in documentation recordings.".into());
+    }
+    administrator_available()?;
     let mut child = Command::new("/usr/bin/pkexec")
         .args(["/usr/local/libexec/tend-admin", action])
         .stdin(Stdio::piped())
@@ -238,6 +245,12 @@ fn refresh(
     });
 }
 fn build(app: &adw::Application) {
+    #[cfg(feature = "docs-demo")]
+    if let Ok(scale) = std::env::var("TEND_QA_TEXT_SCALE") {
+        if let (Ok(scale), Some(settings)) = (scale.parse::<f64>(), gtk::Settings::default()) {
+            settings.set_property("gtk-xft-dpi", (96. * scale * 1024.) as i32);
+        }
+    }
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("../assets/style.css"));
     gtk::style_context_add_provider_for_display(
@@ -251,6 +264,16 @@ fn build(app: &adw::Application) {
         .default_width(960)
         .default_height(760)
         .build();
+    #[cfg(feature = "docs-demo")]
+    if let Ok(width) = std::env::var("TEND_QA_WIDTH") {
+        win.set_default_size(
+            width.parse().unwrap(),
+            std::env::var("TEND_QA_HEIGHT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(760),
+        );
+    }
     let outer = column(0);
     outer.add_css_class("app-root");
     let header = adw::HeaderBar::new();
@@ -261,9 +284,12 @@ fn build(app: &adw::Application) {
         .decoration_layout(":minimize,maximize")
         .build();
     let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_widget_name("window-close");
     close.add_css_class("titlebutton");
     close.add_css_class("circular");
-    close.set_tooltip_text(Some("Close window · keep in dock when enabled"));
+    close.set_tooltip_text(Some("Close window · keep in top panel when enabled"));
+    let panel_ready = std::rc::Rc::new(std::cell::Cell::new(false));
+    let ready = panel_ready.clone();
     let window = win.downgrade();
     close.connect_clicked(move |_| {
         if let Some(w) = window.upgrade() {
@@ -271,7 +297,9 @@ fn build(app: &adw::Application) {
                 .ok()
                 .map(|s| s.trim() != "false")
                 .unwrap_or(true);
-            if keep {
+            if keep && ready.get() {
+                w.set_visible(false);
+            } else if keep {
                 w.minimize()
             } else {
                 w.close()
@@ -293,10 +321,15 @@ fn build(app: &adw::Application) {
     let toast = adw::ToastOverlay::new();
     toast.set_vexpand(true);
     outer.append(&toast);
-    let layout = gtk::Box::new(Orientation::Horizontal, 0);
+    let layout = adw::OverlaySplitView::new();
+    layout.set_min_sidebar_width(208.);
+    layout.set_max_sidebar_width(240.);
+    layout.set_sidebar_width_fraction(0.23);
     toast.set_child(Some(&layout));
     let stack = gtk::Stack::builder()
         .transition_type(gtk::StackTransitionType::Crossfade)
+        .hhomogeneous(false)
+        .vhomogeneous(false)
         .hexpand(true)
         .vexpand(true)
         .build();
@@ -310,9 +343,27 @@ fn build(app: &adw::Application) {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .width_request(208)
         .build();
-    layout.append(&navigation);
-    layout.append(&gtk::Separator::new(Orientation::Vertical));
-    layout.append(&stack);
+    layout.set_sidebar(Some(&navigation));
+    layout.set_content(Some(&stack));
+    let nav_toggle = gtk::ToggleButton::builder()
+        .active(true)
+        .icon_name("sidebar-show-symbolic")
+        .tooltip_text("Show navigation")
+        .visible(false)
+        .build();
+    nav_toggle.set_widget_name("navigation-toggle");
+    header.pack_start(&nav_toggle);
+    nav_toggle
+        .bind_property("active", &layout, "show-sidebar")
+        .bidirectional()
+        .sync_create()
+        .build();
+    let breakpoint =
+        adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 859px").unwrap());
+    breakpoint.add_setter(&layout, "collapsed", Some(&true.to_value()));
+    breakpoint.add_setter(&layout, "show-sidebar", Some(&false.to_value()));
+    breakpoint.add_setter(&nav_toggle, "visible", Some(&true.to_value()));
+    win.add_breakpoint(breakpoint);
     let home = page(
         "Overview",
         "Storage, system health, and maintenance status.",
@@ -350,13 +401,12 @@ fn build(app: &adw::Application) {
     phasebox.append(&label("System health and recent results", "section-label"));
     phasebox.append(&phase);
     home.append(&phasebox);
-    let actions = gtk::Box::new(Orientation::Horizontal, 10);
+    let actions = workbench::buttons(&home);
     let refresh_button = gtk::Button::with_label("Refresh status");
     let run = gtk::Button::with_label("Open disk cleanup");
     run.add_css_class("suggested-action");
-    actions.append(&run);
-    actions.append(&refresh_button);
-    home.append(&actions);
+    actions.insert(&run, -1);
+    actions.insert(&refresh_button, -1);
     home.reorder_child_after(&actions, Some(&group));
     home.append(&label(
         "Closing Tend does not stop scheduled maintenance.",
@@ -364,147 +414,13 @@ fn build(app: &adw::Application) {
     ));
     stack.add_titled(&scroll(&home), Some("overview"), "Overview");
     workbench::add(&stack, &win);
-    let settings = Settings::read();
-    let schedule = page(
-        "Maintenance schedule",
-        "Daily maintenance and advance reminders. Changes take effect when saved.",
-    );
-    let loaded = settings.clone().unwrap_or_default();
-    if let Err(ref e) = settings {
-        schedule.append(&label(&format!("Could not read settings: {e}"), "error"));
-    }
-    let sg = adw::PreferencesGroup::builder()
-        .title("Maintenance schedule")
-        .build();
-    let enabled = toggle(
-        &sg,
-        "Automatic maintenance",
-        "Updates and conservative cleanup on a daily schedule",
-        loaded.enabled,
-    );
-    let time = gtk::Box::new(Orientation::Horizontal, 8);
-    let hour = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
-    hour.set_value(loaded.hour as f64);
-    hour.set_tooltip_text(Some("Hour, 0–23"));
-    let minute = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
-    minute.set_value(loaded.minute as f64);
-    minute.set_tooltip_text(Some("Minute, 0–59"));
-    for spin in [&hour, &minute] {
-        spin.connect_output(|s| {
-            s.set_text(&format!("{:02}", s.value_as_int()));
-            gtk::glib::Propagation::Stop
-        });
-        spin.set_text(&format!("{:02}", spin.value_as_int()));
-    }
-    time.append(&hour);
-    time.append(&label(":", "title-3"));
-    time.append(&minute);
-    row(
-        &sg,
-        "Start time",
-        "24-hour clock · America/Toronto, including daylight saving",
-        &time,
-    );
-    schedule.append(&sg);
-    let wg = adw::PreferencesGroup::builder()
-        .title("Notifications")
-        .description(
-            "Desktop notifications before scheduled maintenance. Missed warnings are skipped.",
-        )
-        .build();
-    let w60 = toggle(
-        &wg,
-        "One hour before",
-        "Notify 60 minutes before maintenance",
-        loaded.warnings[0],
-    );
-    let w30 = toggle(
-        &wg,
-        "Thirty minutes before",
-        "Notify 30 minutes before maintenance",
-        loaded.warnings[1],
-    );
-    let w15 = toggle(
-        &wg,
-        "Fifteen minutes before",
-        "Notify 15 minutes before maintenance",
-        loaded.warnings[2],
-    );
-    schedule.append(&wg);
-    let rg = adw::PreferencesGroup::builder()
-        .title("After maintenance")
-        .build();
-    let reboot = toggle(
-        &rg,
-        "Restart after successful maintenance",
-        "Includes a five-minute warning with a cancel option",
-        loaded.reboot,
-    );
-    schedule.append(&rg);
-    schedule.append(&label("Supported applications and running containers reopen after maintenance restarts. Save your work; terminal jobs and unsaved changes may not be restored.","caption"));
-    let save = gtk::Button::with_label("Save settings");
-    save.add_css_class("suggested-action");
-    save.set_halign(gtk::Align::End);
-    header.pack_end(&save);
-    save.set_visible(false);
-    let save_visibility = save.clone();
-    stack.connect_visible_child_name_notify(move |s| {
-        save_visibility.set_visible(s.visible_child_name().as_deref() == Some("schedule"))
-    });
-    let saved = label("", "caption");
-    schedule.append(&saved);
-    let toast_save = toast.clone();
-    save.connect_clicked(move |button| {
-        let s = Settings {
-            enabled: enabled.is_active(),
-            hour: hour.value_as_int() as u8,
-            minute: minute.value_as_int() as u8,
-            reboot: reboot.is_active(),
-            warnings: [w60.is_active(), w30.is_active(), w15.is_active()],
-        };
-        let json = serde_json::to_string(&s).unwrap();
-        button.set_sensitive(false);
-        saved.set_text("Saving maintenance settings…");
-        let (button, saved, toast) = (button.clone(), saved.clone(), toast_save.clone());
-        job(
-            move || privileged("apply", Some(json)),
-            move |r| {
-                button.set_sensitive(true);
-                match r {
-                    Ok(_) => {
-                        saved.set_text("Saved. Your timers now use these settings.");
-                        toast.add_toast(adw::Toast::new("Settings saved"));
-                    }
-                    Err(e) => saved.set_text(&format!("Not saved: {e}")),
-                }
-            },
-        );
-    });
-    stack.add_titled(&scroll(&schedule), Some("schedule"), "Schedule");
+    maintenance_ui::add(&stack, &win);
     let care = page(
-        "Appearance & daily policy",
-        "Display preferences and cleanup policy shortcuts.",
+        "Appearance",
+        "These preferences save automatically when changed.",
     );
-    let cg = adw::PreferencesGroup::builder()
-        .title("Daily cleanup policy")
-        .build();
-    let edit = gtk::Button::with_label("Configure daily cleanup");
-    row(
-        &cg,
-        "Cleanup categories and retention",
-        &tend::daily_policy::Policy::read()
-            .map(|p| {
-                format!(
-                    "Docker: {} / {} days · {} GB allowance · npm logs: {} days",
-                    p.build_days, p.image_days, p.keep_gb, p.npm_log_days
-                )
-            })
-            .unwrap_or_else(|_| "Daily policy needs attention · open the editor to review".into()),
-        &edit,
-    );
-    let pages = stack.clone();
-    edit.connect_clicked(move |_| pages.set_visible_child_name("daily-cleanup"));
-    care.append(&cg);
+    let preference_status = editor::Notice::new();
+    care.append(&preference_status.root);
     let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
     let theme = gtk::DropDown::from_strings(&["Follow system", "Light", "Dark"]);
     let pref = glib::user_config_dir().join("tend/theme");
@@ -522,26 +438,70 @@ fn build(app: &adw::Application) {
         })
     };
     set_theme(theme_idx);
+    let last_theme = std::rc::Rc::new(std::cell::Cell::new(theme_idx));
+    let changing_theme = std::rc::Rc::new(std::cell::Cell::new(false));
+    let theme_status = preference_status.clone();
     theme.connect_selected_notify(move |w| {
-        set_theme(w.selected());
-        if let Some(parent) = pref.parent() {
-            let _ = fs::create_dir_all(parent);
+        if changing_theme.get() {
+            return;
         }
-        let _ = fs::write(&pref, w.selected().to_string());
+        match tend::workstation::private_write(&pref, &w.selected().to_string()) {
+            Ok(()) => {
+                last_theme.set(w.selected());
+                set_theme(w.selected());
+                theme_status.root.set_visible(false);
+            }
+            Err(error) => {
+                changing_theme.set(true);
+                w.set_selected(last_theme.get());
+                changing_theme.set(false);
+                set_theme(last_theme.get());
+                theme_status.show(
+                    "Color scheme could not be saved. The previous preference was restored.",
+                    Some(&error),
+                    true,
+                );
+            }
+        }
     });
-    row(&appearance, "Color scheme", "Saved for this app", &theme);
+    row(
+        &appearance,
+        "Color scheme",
+        "Applies to Tend only · saved automatically",
+        &theme,
+    );
     let background_path = glib::user_config_dir().join("tend/background");
     let background = toggle(
         &appearance,
-        "Close to dock",
-        "The title-bar close button minimizes Tend. Dock Quit, Alt+F4 and Quit Tend always exit.",
+        "Close to top panel",
+        "Keep Tend available from its panel icon. If the panel is unavailable, minimize to the dock. Quit Tend and Alt+F4 always exit.",
         fs::read_to_string(&background_path).ok().as_deref() != Some("false"),
     );
+    let last_background = std::rc::Rc::new(std::cell::Cell::new(background.is_active()));
+    let changing_background = std::rc::Rc::new(std::cell::Cell::new(false));
     background.connect_active_notify(move |b| {
-        let _ = tend::workstation::private_write(
+        if changing_background.get() {
+            return;
+        }
+        match tend::workstation::private_write(
             &background_path,
             if b.is_active() { "true" } else { "false" },
-        );
+        ) {
+            Ok(()) => {
+                last_background.set(b.is_active());
+                preference_status.root.set_visible(false);
+            }
+            Err(error) => {
+                changing_background.set(true);
+                b.set_active(last_background.get());
+                changing_background.set(false);
+                preference_status.show(
+                    "Window preference could not be saved. The previous preference was restored.",
+                    Some(&error),
+                    true,
+                );
+            }
+        }
     });
     care.append(&appearance);
     care.append(&label("Tend 0.2", "caption"));
@@ -553,22 +513,15 @@ fn build(app: &adw::Application) {
     let load = gtk::Button::with_label("Load recent activity");
     load.set_halign(gtk::Align::Start);
     logs.append(&load);
-    let view = gtk::TextView::builder()
-        .editable(false)
-        .cursor_visible(false)
-        .monospace(true)
-        .wrap_mode(gtk::WrapMode::WordChar)
-        .build();
-    view.buffer()
-        .set_text("Choose “Load recent activity” to read the system journal.");
-    let vs = gtk::ScrolledWindow::builder()
-        .child(&view)
-        .min_content_height(440)
-        .vexpand(true)
-        .build();
-    logs.append(&vs);
+    let view = workbench::text_panel(&logs);
+    workbench::report_hint(
+        &view,
+        "Choose Load recent activity to read the maintenance journal.",
+    );
+    workbench::exports(&logs, &view);
     load.connect_clicked(move |b| {
         b.set_sensitive(false);
+        view.buffer().set_text("Working…");
         let (b, buffer) = (b.clone(), view.buffer());
         job(
             || {
@@ -660,9 +613,13 @@ fn build(app: &adw::Application) {
             button.set_child(Some(&content));
             button.set_active(stack.visible_child_name().as_deref() == Some(id));
             let pages = stack.clone();
+            let navigation_view = layout.clone();
             button.connect_clicked(move |b| {
                 pages.set_visible_child_name(id);
                 b.set_active(true);
+                if navigation_view.is_collapsed() {
+                    navigation_view.set_show_sidebar(false);
+                }
             });
             let target = button.downgrade();
             stack.connect_visible_child_name_notify(move |s| {
@@ -675,6 +632,12 @@ fn build(app: &adw::Application) {
     }
     win.set_content(Some(&outer));
     win.present();
+    panel::install(app, panel_ready.clone());
+    #[cfg(feature = "docs-demo")]
+    if let Ok(path) = std::env::var("TEND_PANEL_QA") {
+        docs_demo::panel_qa(&win, &outer, panel_ready, &path);
+        return;
+    }
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
     #[cfg(feature = "docs-demo")]
     if let Ok(directory) = std::env::var("TEND_QA_DIR") {
@@ -710,12 +673,19 @@ fn build(app: &adw::Application) {
                 return glib::ControlFlow::Continue;
             }
             let shot = gtk::Snapshot::new();
+            #[cfg(feature = "docs-demo")]
+            {
+                let scale = outer.scale_factor() as f32;
+                shot.scale(scale, scale);
+            }
             paint.snapshot(&shot, outer.width() as f64, outer.height() as f64);
             if let (Some(node), Some(renderer)) = (shot.to_node(), win.renderer()) {
                 let texture = renderer.render_texture(&node, None);
                 if let Err(e) = texture.save_to_png(&path) {
                     eprintln!("Screenshot failed: {e}");
                 }
+                #[cfg(feature = "docs-demo")]
+                docs_demo::validate_capture(&outer, &stack, &path);
                 app.quit();
                 return glib::ControlFlow::Break;
             }

@@ -1,4 +1,4 @@
-use crate::{job, label, page, privileged, row, scroll};
+use crate::{column, job, label, page, privileged, row, scroll};
 use adw::prelude::*;
 use gtk::{glib, Orientation};
 use std::{
@@ -19,10 +19,10 @@ pub(crate) fn text_panel(parent: &gtk::Box) -> gtk::TextView {
         .cursor_visible(false)
         .monospace(true)
         .wrap_mode(gtk::WrapMode::WordChar)
-        .top_margin(12)
-        .bottom_margin(12)
-        .left_margin(12)
-        .right_margin(12)
+        .top_margin(16)
+        .bottom_margin(16)
+        .left_margin(16)
+        .right_margin(16)
         .build();
     let sc = gtk::ScrolledWindow::builder()
         .child(&view)
@@ -30,8 +30,97 @@ pub(crate) fn text_panel(parent: &gtk::Box) -> gtk::TextView {
         .vexpand(true)
         .build();
     sc.add_css_class("card");
-    parent.append(&sc);
+    let empty = column(8);
+    empty.set_margin_top(16);
+    empty.set_margin_bottom(16);
+    let icon = gtk::Image::from_icon_name("document-open-recent-symbolic");
+    icon.set_pixel_size(28);
+    icon.add_css_class("dim-label");
+    let title = label("No report yet", "heading");
+    title.set_halign(gtk::Align::Center);
+    let hint = label(
+        "Choose an action above to collect a report. Nothing runs automatically.",
+        "dim-label",
+    );
+    hint.set_justify(gtk::Justification::Center);
+    hint.set_halign(gtk::Align::Center);
+    hint.set_max_width_chars(60);
+    hint.set_widget_name("report-hint");
+    empty.append(&icon);
+    empty.append(&title);
+    empty.append(&hint);
+    let loading = column(10);
+    loading.set_margin_top(24);
+    loading.set_margin_bottom(24);
+    let spinner = gtk::Spinner::builder()
+        .spinning(true)
+        .halign(gtk::Align::Center)
+        .build();
+    let working = label("Collecting report…", "body");
+    working.set_halign(gtk::Align::Center);
+    loading.append(&spinner);
+    loading.append(&working);
+    let error = crate::editor::Notice::new();
+    let stack = gtk::Stack::new();
+    stack.set_widget_name("report-state");
+    stack.add_named(&empty, Some("empty"));
+    stack.add_named(&loading, Some("loading"));
+    stack.add_named(&error.root, Some("error"));
+    stack.add_named(&sc, Some("report"));
+    stack.set_hhomogeneous(false);
+    stack.set_vhomogeneous(false);
+    stack.set_visible_child_name("empty");
+    parent.append(&stack);
+    let target = stack.downgrade();
+    view.buffer().connect_changed(move |b| {
+        let Some(stack) = target.upgrade() else {
+            return;
+        };
+        let text = b.text(&b.start_iter(), &b.end_iter(), false);
+        if text.is_empty() {
+            stack.set_visible_child_name("empty");
+        } else if text == "Working…" || text.starts_with("Collecting a read-only preview") {
+            stack.set_visible_child_name("loading");
+        } else if [
+            "Could not complete operation:",
+            "Preview failed:",
+            "Could not read journal:",
+            "Cleanup did not finish:",
+        ]
+        .iter()
+        .any(|s| text.starts_with(s))
+        {
+            error.show(
+                "The operation could not finish. Review the details and try again.",
+                Some(&text),
+                true,
+            );
+            stack.set_visible_child_name("error");
+        } else {
+            stack.set_visible_child_name("report");
+        }
+    });
     view
+}
+pub(crate) fn report_hint(view: &gtk::TextView, message: &str) {
+    view.buffer().set_text(message);
+    if let Some(stack) = view
+        .ancestor(gtk::Stack::static_type())
+        .and_downcast::<gtk::Stack>()
+    {
+        if let Some(empty) = stack.child_by_name("empty") {
+            let mut child = empty.first_child();
+            while let Some(w) = child {
+                child = w.next_sibling();
+                if w.widget_name() == "report-hint" {
+                    if let Ok(l) = w.downcast::<gtk::Label>() {
+                        l.set_text(message);
+                    }
+                }
+            }
+        }
+        stack.set_visible_child_name("empty");
+    }
 }
 pub(crate) fn buttons(parent: &gtk::Box) -> gtk::FlowBox {
     let b = gtk::FlowBox::builder()
@@ -103,6 +192,19 @@ pub(crate) fn exports(parent: &gtk::Box, view: &gtk::TextView) {
             .set_text(&buffer.text(&buffer.start_iter(), &buffer.end_iter(), false));
     });
     parent.append(&status);
+    if let Some(stack) = view
+        .ancestor(gtk::Stack::static_type())
+        .and_downcast::<gtk::Stack>()
+    {
+        let (bar, status) = (bar.clone(), status.clone());
+        let update = move |stack: &gtk::Stack| {
+            let has_report = stack.visible_child_name().as_deref() == Some("report");
+            bar.set_visible(has_report);
+            status.set_visible(has_report);
+        };
+        update(&stack);
+        stack.connect_visible_child_name_notify(update);
+    }
 }
 fn report_job<F: FnOnce() -> Result<String, String> + Send + 'static>(
     b: &gtk::Button,
@@ -182,8 +284,10 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     list.add_css_class("boxed-list");
     p.append(&list);
     let view = text_panel(&p);
-    view.buffer()
-        .set_text("Choose a folder, then Scan folder. Large entries will have an Open button.");
+    report_hint(
+        &view,
+        "Choose a folder, then Scan folder. Large entries will have an Open button.",
+    );
     exports(&p, &view);
     let v = view.clone();
     mounts.connect_clicked(move |b| report_job(b, &v, w::system_report));
@@ -320,14 +424,14 @@ fn startup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             b.set_sensitive(true);while let Some(c)=list.first_child(){list.remove(&c);}match result.and_then(|s|serde_json::from_str::<serde_json::Value>(&s).map_err(|e|e.to_string())){Ok(v)=>{
                 for app in v["apps"].as_array().into_iter().flatten(){let Ok(app)=serde_json::from_value::<pref::Startup>(app.clone())else{continue};let r=adw::ActionRow::builder().use_markup(false).title(&app.title).subtitle(format!("Login app · {}",app.id)).build();let toggle=gtk::Button::with_label(if app.enabled{"Disable"}else{"Enable"});toggle.set_valign(gtk::Align::Center);let enabled=Rc::new(Cell::new(app.enabled));let (parent,view)=(parent.clone(),view.clone());toggle.connect_clicked(move|b|{let desired=!enabled.get();let (id,b,enabled,view)=(app.id.clone(),b.clone(),enabled.clone(),view.clone());confirm(&parent,"Change this login application?",&format!("{} will be {} at your next login. Recovery can restore the previous entry.",app.title,if desired{"enabled"}else{"disabled"}),"Save",false,move||{b.set_sensitive(false);let (id,b,enabled,view)=(id.clone(),b.clone(),enabled.clone(),view.clone());job(move||pref::set_startup(&id,desired),move|r|{b.set_sensitive(true);if r.is_ok(){enabled.set(desired);b.set_label(if desired{"Disable"}else{"Enable"});}view.buffer().set_text(&r.unwrap_or_else(|e|e));});});});r.add_suffix(&toggle);list.append(&r);}
                 for unit in v["units"].as_array().into_iter().flatten(){let Some(id)=unit[0].as_str().map(str::to_owned)else{continue};let enabled=Rc::new(Cell::new(unit[1].as_bool().unwrap_or(false)));let r=adw::ActionRow::builder().use_markup(false).title(&id).subtitle("Optional user service · future activation only").build();let toggle=gtk::Button::with_label(if enabled.get(){"Disable"}else{"Enable"});toggle.set_valign(gtk::Align::Center);let (parent,view)=(parent.clone(),view.clone());toggle.connect_clicked(move|b|{let desired=!enabled.get();let (id,b,enabled,view)=(id.clone(),b.clone(),enabled.clone(),view.clone());confirm(&parent,"Change future service activation?","This updates the user service enablement. No service will be started or stopped.","Save",false,move||{b.set_sensitive(false);let (id,b,enabled,view)=(id.clone(),b.clone(),enabled.clone(),view.clone());job(move||pref::set_unit(&id,desired),move|r|{b.set_sensitive(true);if r.is_ok(){enabled.set(desired);b.set_label(if desired{"Disable"}else{"Enable"});}view.buffer().set_text(&r.unwrap_or_else(|e|e));});});});r.add_suffix(&toggle);list.append(&r);}
-                view.buffer().set_text("Entries loaded. The maintenance restoration login entry can be enabled or disabled here. Reboot policy remains in Schedule.");
+                view.buffer().set_text("Entries loaded. The maintenance restoration login entry can be enabled or disabled here. Reboot policy remains in Maintenance.");
             },Err(e)=>view.buffer().set_text(&e)}
         });
     });
     stack.add_titled(&scroll(&p), Some("startup"), "Startup & services");
 }
 fn tuning(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    let p=page("Performance settings","Change one setting at a time and compare normal work using saved performance snapshots. Every tuning action offers recovery.");
+    let p=page("Performance","Change one setting at a time and compare normal work using saved performance snapshots. Every tuning action offers recovery.");
     let desktop = adw::PreferencesGroup::builder()
         .title("Desktop responsiveness")
         .build();
@@ -414,7 +518,7 @@ fn tuning(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let prepare = button(&bar, "Prepare zram support…");
     let save = button(&bar, "Apply memory settings…");
     let view = text_panel(&p);
-    view.buffer().set_text("No changes applied. Live swap remains active. zram capacity changes never trigger a restart. Existing configuration files remain in place; Tend adds its own override.");
+    report_hint(&view, "No changes applied. Live swap remains active. zram capacity changes never trigger a restart. Existing configuration files remain in place; Tend adds its own override.");
     exports(&p, &view);
     let v = view.clone();
     read.connect_clicked(move |b| {
@@ -454,7 +558,7 @@ fn development(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let npm = button(&bar, "Verify npm cache");
     let logs = button(&bar, "Docker log sizes…");
     let view = text_panel(&p);
-    view.buffer().set_text("Docker statistics are collected once per request. Folder scans on Storage also report node_modules, target, build, dist and virtual-environment sizes.");
+    report_hint(&view, "Docker statistics are collected once per request. Folder scans on Storage also report node_modules, target, build, dist and virtual-environment sizes.");
     exports(&p, &view);
     let v = view.clone();
     inspect.connect_clicked(move |b| report_job(b, &v, w::development_report));
@@ -472,7 +576,7 @@ fn updates(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let history = button(&bar, "Load history");
     let health = button(&bar, "System report");
     let view = text_panel(&p);
-    view.buffer().set_text("No updates requested. Pending updates are based on the last refreshed APT package lists. Reports can contain local paths and application names; review them before sharing.");
+    report_hint(&view, "No updates requested. Pending updates are based on the last refreshed APT package lists. Reports can contain local paths and application names; review them before sharing.");
     exports(&p, &view);
     let v = view.clone();
     pending.connect_clicked(move|b|report_job(b,&v,||{let packages=w::command("/usr/bin/apt",&["list","--upgradable"]);Ok(format!("Packages available according to cached repository metadata:\n{packages}\n\nConfigured unattended-upgrades origins and holds decide which packages can be installed.\nReboot required: {}",std::path::Path::new("/var/run/reboot-required").exists()))}));

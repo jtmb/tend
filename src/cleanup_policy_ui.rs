@@ -1,6 +1,6 @@
 //! Native editors for independent manual/cron and daily maintenance policies.
-use crate::workbench::{button, buttons, confirm, exports, text_panel};
-use crate::{job, label, page, row, scroll};
+use crate::workbench::{button, buttons, confirm, exports, report_hint, text_panel};
+use crate::{editor, job, page, row};
 use adw::prelude::*;
 use std::{
     cell::{Cell, RefCell},
@@ -244,7 +244,7 @@ fn navigation(p: &gtk::Box, stack: &gtk::Stack, is_daily: bool) {
         if is_daily {
             "Manual & cron settings"
         } else {
-            "Daily maintenance settings"
+            "Daily cleanup settings"
         },
     );
     let stack = stack.clone();
@@ -260,24 +260,21 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let loaded = w::Cleanup::load();
     let saved = Rc::new(RefCell::new(loaded.as_ref().ok().cloned()));
     controls.set_manual(loaded.as_ref().unwrap_or(&w::Cleanup::default()));
-    let status = label(
-        &loaded
-            .map(|_| "Saved · manual & cron policy".into())
-            .unwrap_or_else(|e| {
-                format!("Cannot load policy: {e}. Review defaults before saving a replacement.")
-            }),
-        "caption",
+    let footer = editor::Footer::new(
+        !w::home().join(".config/tend/cleanup.json").exists(),
+        saved.borrow().is_some(),
+        None,
     );
-    p.append(&status);
-    let description = p.first_child().unwrap().next_sibling().unwrap();
-    p.reorder_child_after(&status, Some(&description));
-    if saved.borrow().is_none() {
-        status.add_css_class("error");
+    if let Err(e) = &loaded {
+        editor::error(
+            &p,
+            "Cannot load policy. Review defaults before saving a replacement.",
+            e,
+        );
     }
+    let save = footer.save.clone();
+    let discard = footer.discard.clone();
     let saves = buttons(&p);
-    let save = button(&saves, "Save policy");
-    save.add_css_class("suggested-action");
-    let discard = button(&saves, "Discard changes");
     let defaults = button(&saves, "Restore defaults");
     let revision = Rc::new(Cell::new(0u64));
     let approved = Rc::new(RefCell::new(None::<(u64, w::Cleanup, rules::Policy)>));
@@ -287,8 +284,10 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     apply.add_css_class("destructive-action");
     apply.set_sensitive(false);
     let view = text_panel(&p);
-    view.buffer()
-        .set_text("Preview is required. No cleanup runs when you edit or save a policy.");
+    report_hint(
+        &view,
+        "Preview is required. No cleanup runs when you edit or save a policy.",
+    );
     exports(&p, &view);
     let invalidate: Rc<dyn Fn()> = Rc::new({
         let (revision, approved, apply, view) = (
@@ -301,62 +300,59 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             revision.set(revision.get().wrapping_add(1));
             approved.borrow_mut().take();
             apply.set_sensitive(false);
-            view.buffer()
-                .set_text("Policy changed. Preview again to review eligible items.");
+            report_hint(
+                &view,
+                "Policy changed. Preview again to review eligible items.",
+            );
         }
     });
     let changed: Rc<dyn Fn()> = Rc::new({
-        let (invalidate, status, saved, controls) = (
+        let (invalidate, footer, saved, controls) = (
             invalidate.clone(),
-            status.clone(),
+            footer.clone(),
             saved.clone(),
             controls.clone(),
         );
         move || {
             invalidate();
             let current = controls.manual();
-            status.set_text(
-                if saved
+            footer.sync(
+                saved
                     .borrow()
                     .as_ref()
-                    .map(|p| normalized(p) == normalized(&current))
-                    .unwrap_or(false)
-                {
-                    "Saved · manual & cron policy"
-                } else {
-                    "Unsaved changes · scheduled jobs still use the saved policy"
-                },
+                    .map(|p| normalized(p) != normalized(&current))
+                    .unwrap_or(true),
+                current.validate().is_ok(),
             );
         }
     });
     controls.changed(changed);
-    if let Err(error) = rules::Policy::load() {
-        let notice=label(&format!("Folder rules need attention: {error}. Preview and cleanup are unavailable until the saved rules are repaired."),"error");
-        p.append(&notice);
-        p.reorder_child_after(&notice, Some(&status));
-    }
     let extra = crate::cleanup_ui::section(win, invalidate.clone());
     p.append(&extra);
     p.reorder_child_after(&extra, Some(&saves));
-    let (c, s, out) = (controls.clone(), saved.clone(), status.clone());
+    let (c, s) = (controls.clone(), saved.clone());
     discard.connect_clicked(move |_| {
         if let Some(p) = s.borrow().as_ref() {
             c.set_manual(p);
-            out.set_text("Saved · changes discarded");
-        } else {
-            out.set_text(
-                "No valid saved policy. Repair the file or explicitly save reviewed defaults.",
-            );
         }
     });
     let c = controls.clone();
     defaults.connect_clicked(move |_| c.set_manual(&w::Cleanup::default()));
-    let (c, s, out, parent) = (controls.clone(), saved.clone(), status.clone(), win.clone());
-    save.connect_clicked(move |_|{
-        let policy=c.manual();let (s,out)=(s.clone(),out.clone());
-        let error_out=out.clone();
-        let commit=move||match policy.save(){Ok(())=>{*s.borrow_mut()=Some(policy.clone());out.remove_css_class("error");out.set_text("Saved · manual & cron policy");},Err(e)=>out.set_text(&format!("Policy not saved: {e}"))};
-        match rules::Schedule::load(){Ok(schedule)if schedule.enabled=>confirm(&parent,"Change automatic cleanup policy?","Your enabled cron jobs will use these selections at their next run. Review ages, custom folder rules and whole-cache selections.","Save policy",false,commit),Ok(_)=>commit(),Err(e)=>error_out.set_text(&format!("Cannot confirm schedule state: {e}"))}
+    let (c, s, out, parent) = (controls.clone(), saved.clone(), footer.clone(), win.clone());
+    save.connect_clicked(move |_| {
+        let policy = c.manual(); let (s, out) = (s.clone(), out.clone());
+        let error_out = out.clone();
+        let commit = move || {
+            out.saving();
+            match policy.save() {
+                Ok(()) => { *s.borrow_mut() = Some(policy.clone()); out.success(); },
+                Err(e) => out.error(&e)
+            }
+        };
+        match rules::Schedule::load() {
+            Ok(schedule) if schedule.enabled => confirm(&parent, "Change automatic cleanup policy?", "Your enabled cron jobs will use these selections at their next run. This saves category and retention fields; folder rules have their own Save rule action.", "Save changes", false, commit),
+            Ok(_) => commit(), Err(e) => error_out.error(&format!("Cannot confirm schedule state: {e}"))
+        }
     });
     let (c, rev, plan, b, v) = (
         controls.clone(),
@@ -370,7 +366,7 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         plan.borrow_mut().take();b.set_sensitive(false);button.set_sensitive(false);v.buffer().set_text("Collecting a read-only preview…");
         job(move||{let custom=rules::Policy::load()?;let report=format!("{}\n\n{}",w::cleanup_preview(&policy)?,rules::preview(&custom)?);Ok((report,policy,custom))},move|result|{
             button.set_sensitive(true);
-            if generation!=rev.get(){v.buffer().set_text("Settings changed while the preview was running. Preview again to review the current policy.");return;}
+            if generation!=rev.get(){report_hint(&v,"Settings changed while the preview was running. Preview again to review the current policy.");return;}
             match result{Ok((report,policy,custom))=>{v.buffer().set_text(&report);let compatible=!policy.apt||daily::Policy::ready();if !compatible{let mut end=v.buffer().end_iter();v.buffer().insert(&mut end,"\n\nSystem helper update required for APT cleanup. Preview remains available.");}b.set_sensitive(compatible);*plan.borrow_mut()=Some((generation,policy,custom));},Err(e)=>v.buffer().set_text(&format!("Preview failed: {e}"))}
         });
     });
@@ -381,7 +377,7 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         if generation!=rev.get(){return;}
         let (rev,plan,v,editor,apply_done)=(rev.clone(),plan.clone(),v.clone(),editor.clone(),apply_done.clone());
         confirm(&parent,"Clean the previewed items?","This permanently removes selected cache files and Trash contents. Docker checks eligibility at execution.","Clean selected",true,move||{
-            if generation!=rev.get(){v.buffer().set_text("Policy changed. Preview again before cleaning.");return;}
+            if generation!=rev.get(){report_hint(&v,"Policy changed. Preview again before cleaning.");return;}
             plan.borrow_mut().take();editor.set_sensitive(false);let (v,editor,apply_done)=(v.clone(),editor.clone(),apply_done.clone());let (policy,custom)=(policy.clone(),custom.clone());
             job(move||{
                 let _lock=rules::cleanup_lock()?;
@@ -392,7 +388,7 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             },move|result|{editor.set_sensitive(true);apply_done.set_sensitive(false);v.buffer().set_text(&result.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}")));});
         });
     });
-    stack.add_titled(&scroll(&p), Some("cleanup"), "Disk cleanup");
+    stack.add_titled(&editor::shell(&p, &footer), Some("cleanup"), "Disk cleanup");
 }
 fn normalized(p: &w::Cleanup) -> w::Cleanup {
     let mut p = p.clone();
@@ -402,36 +398,34 @@ fn normalized(p: &w::Cleanup) -> w::Cleanup {
 }
 
 pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    let p=page("Daily maintenance","System cleanup policy · Independent of manual and user cron cleanup. Changes apply at the next existing maintenance run.");
+    let p=page("Daily cleanup","System cleanup policy · Independent of manual and user cron cleanup. Changes apply at the next existing maintenance run.");
     navigation(&p, stack, true);
-    if !daily::Policy::ready() {
-        p.append(&label("System integration update required · Review and preview settings here. Saving becomes available after the updated administrator helper is installed.","warning"));
-    }
     let controls = Controls::build(&p, true);
     let loaded = daily::Policy::read();
     let saved = Rc::new(RefCell::new(loaded.as_ref().ok().cloned()));
     controls.set_daily(loaded.as_ref().unwrap_or(&daily::Policy::default()));
-    let status = label(
-        &loaded
-            .map(|_| "Saved · daily policy".into())
-            .unwrap_or_else(|e| format!("Cannot load policy: {e}")),
-        "caption",
+    let footer = editor::Footer::new(
+        !std::path::Path::new(daily::CONFIG).exists(),
+        saved.borrow().is_some(),
+        if daily::Policy::ready() {
+            None
+        } else {
+            Some("System integration update required to save. Review and preview remain available.")
+        },
     );
-    p.append(&status);
-    let description = p.first_child().unwrap().next_sibling().unwrap();
-    p.reorder_child_after(&status, Some(&description));
-    if saved.borrow().is_none() {
-        status.add_css_class("error");
+    if let Err(e) = &loaded {
+        editor::error(
+            &p,
+            "Cannot load daily policy. Review defaults before saving a replacement.",
+            e,
+        );
     }
+    let save = footer.save.clone();
+    let discard = footer.discard.clone();
     let bar = buttons(&p);
-    let save = button(&bar, "Save daily policy");
-    save.add_css_class("suggested-action");
-    save.set_sensitive(daily::Policy::ready());
-    let discard = button(&bar, "Discard changes");
     let defaults = button(&bar, "Restore defaults");
     let preview = button(&bar, "Preview daily policy");
     let managed = adw::PreferencesGroup::builder()
-        .title("Managed by Ubuntu")
         .description("Existing system services retain ownership of these policies.")
         .build();
     for (title, desc) in [
@@ -450,52 +444,61 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             .build();
         managed.add(&r);
     }
-    p.append(&managed);
+    let managed_info = gtk::Expander::builder()
+        .label("Managed by Ubuntu · read only")
+        .child(&managed)
+        .build();
+    p.append(&managed_info);
     let view = text_panel(&p);
-    view.buffer().set_text(
+    report_hint(
+        &view,
         "Preview lists the exact policy actions. It never runs pruning, updates or maintenance.",
     );
-    let (c, s, out) = (controls.clone(), saved.clone(), status.clone());
+    let (c, s, out, preview_view) = (
+        controls.clone(),
+        saved.clone(),
+        footer.clone(),
+        view.clone(),
+    );
     controls.changed(Rc::new(move || {
-        out.set_text(if s.borrow().as_ref() == Some(&c.daily()) {
-            "Saved · daily policy"
-        } else {
-            "Unsaved changes · daily maintenance still uses saved settings"
-        })
+        report_hint(
+            &preview_view,
+            "Preview this draft to review its current actions. No maintenance runs from a preview.",
+        );
+        let current = c.daily();
+        out.sync(
+            s.borrow().as_ref() != Some(&current),
+            current.validate().is_ok(),
+        );
     }));
-    let (c, s, out) = (controls.clone(), saved.clone(), status.clone());
+    let (c, s) = (controls.clone(), saved.clone());
     discard.connect_clicked(move |_| {
         if let Some(p) = s.borrow().as_ref() {
             c.set_daily(p);
-            out.set_text("Saved · changes discarded");
         }
     });
     let c = controls.clone();
     defaults.connect_clicked(move |_| c.set_daily(&daily::Policy::default()));
     let (c, v) = (controls.clone(), view.clone());
     preview.connect_clicked(move |_| v.buffer().set_text(&c.daily().plan().unwrap_or_else(|e| e)));
-    let (parent, out, editor) = (win.clone(), status, p.clone());
-    save.connect_clicked(move |b| {
+    let (parent, out, editor) = (win.clone(), footer.clone(), p.clone());
+    save.connect_clicked(move |_| {
         let policy = controls.daily();
-        let (b, out, saved, editor) = (b.clone(), out.clone(), saved.clone(), editor.clone());
+        let (out, saved, editor) = (out.clone(), saved.clone(), editor.clone());
         let error_out = out.clone();
         let commit = move || {
             if !daily::Policy::ready() {
-                out.set_text("System integration update required. Nothing saved.");
+                out.error("System integration update required. Nothing saved.");
                 return;
             }
             if let Err(e) = policy.validate() {
-                out.set_text(&e);
+                out.error(&e);
                 return;
             }
+            out.saving();
             editor.set_sensitive(false);
-            let (b, out, saved, policy, editor) = (
-                b.clone(),
-                out.clone(),
-                saved.clone(),
-                policy.clone(),
-                editor.clone(),
-            );
+            let (out, saved, policy, editor) =
+                (out.clone(), saved.clone(), policy.clone(), editor.clone());
             job(
                 move || {
                     crate::privileged(
@@ -506,14 +509,12 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                 },
                 move |r| {
                     editor.set_sensitive(true);
-                    b.set_sensitive(true);
                     match r {
                         Ok(policy) => {
                             *saved.borrow_mut() = Some(policy);
-                            out.remove_css_class("error");
-                            out.set_text("Saved · daily policy");
+                            out.success();
                         }
-                        Err(e) => out.set_text(&format!("Not saved: {e}")),
+                        Err(e) => out.error(&e),
                     }
                 },
             );
@@ -528,8 +529,12 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                 commit,
             ),
             Ok(_) => commit(),
-            Err(e) => error_out.set_text(&format!("Cannot confirm maintenance state: {e}")),
+            Err(e) => error_out.error(&format!("Cannot confirm maintenance state: {e}")),
         }
     });
-    stack.add_titled(&scroll(&p), Some("daily-cleanup"), "Daily maintenance");
+    stack.add_titled(
+        &editor::shell(&p, &footer),
+        Some("daily-cleanup"),
+        "Daily cleanup",
+    );
 }

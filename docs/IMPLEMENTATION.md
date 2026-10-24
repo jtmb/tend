@@ -134,3 +134,42 @@ GIF (about 0.79 MiB) passed all six input-preservation checks. User binaries wer
 installed without closing the running instance. System deployment remains the
 documented administrator handoff; destructive/privileged host execution was not
 exercised. Maintenance, cron, login and restart settings were preserved.
+
+## Consistent editors and top-panel access — 2026-10-23
+
+`editor.rs` owns the common pinned footer and semantic notices for Maintenance,
+manual/cron policy, daily policy and cleanup scheduling. Typed baselines remain
+independent. Only successful saves replace them; Discard never writes. Native
+OverlaySplitView collapses navigation below 860 logical pixels. Reports share
+empty/loading/result/error presentation, and important text inherits the desktop
+font. Appearance uses atomic private writes, reports failures and restores prior
+values. Simple cron schedules initialize their actual mode/time/day without
+normalizing saved expressions on open or discard.
+
+`panel.rs` exports StatusNotifierItem and DBusMenu through existing GIO, without
+a tray library, daemon or polling. Close hides the window only after registration
+with a panel host; otherwise it minimizes. A disappearing host reopens the window.
+Open and Quit use the same application actions as the native menu. Monitoring
+explicitly requires a visible, mapped, focused window and pauses when hidden.
+The ordinary binary excludes every documentation/test environment adapter.
+
+See `docs/demo/README.md` for isolated native interaction, accessibility, panel
+protocol and screenshot checks. Interface delivery leaves the already-running
+app and system integration unchanged.
+
+### Verification
+
+28 Rust checks and 11 Python checks passed; the legacy deletion test remained
+explicitly skipped. Native review covered all 15 pages at three window widths in
+both themes, plus 24 editor captures at 200% device scale, large text and native
+high contrast. Focused checks covered failed saves, defaults/discard, draft
+retention, keyboard traversal, visible malformed-file errors and stale manual,
+daily and cron previews. Private-bus panel checks proved hide/open/quit and host-loss
+recovery. The installed release registered with Ubuntu's real panel watcher; its
+icon, menu and executable checksum were verified. Maintenance, login and user
+policy fingerprints were unchanged. No cleanup, package update, schedule change,
+password prompt or system restart was performed.
+
+The refreshed 38-second README GIF shows actual preview and log-filter callbacks
+against preserved sample inputs. The system helper and daily-policy deployment
+remain a separate documented integration step.

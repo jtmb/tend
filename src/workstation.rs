@@ -46,7 +46,11 @@ pub fn bytes(n: u64) -> String {
 }
 pub fn private_write(path: &Path, text: &str) -> Result<(), String> {
     fs::create_dir_all(path.parent().ok_or("Missing parent")?).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension(format!("{}.tmp", now()));
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp = path.with_extension(format!("{}.{nonce}.tmp", std::process::id()));
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create_new(true)

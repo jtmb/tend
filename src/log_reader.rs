@@ -5,7 +5,7 @@ use std::{cell::RefCell, rc::Rc};
 use tend::{system_logs as logs, workstation as w};
 pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let p=page("System logs","Read recent events and crashed applications. Filter the results, then select an event for details. Logs are loaded only on request.");
-    let controls = gtk::Box::new(Orientation::Horizontal, 8);
+    let controls = crate::workbench::buttons(&p);
     let source =
         gtk::DropDown::from_strings(&["System journal", "My application logs", "Recent crashes"]);
     source.set_tooltip_text(Some("Log source"));
@@ -20,26 +20,29 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         "Information and worse",
     ]);
     priority.set_tooltip_text(Some("Severity filter"));
-    controls.append(&source);
-    controls.append(&period);
-    controls.append(&priority);
-    p.append(&controls);
+    controls.insert(&source, -1);
+    controls.insert(&period, -1);
+    controls.insert(&priority, -1);
+
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search application, service, PID or message")
         .hexpand(true)
         .build();
     p.append(&search);
-    let actions = gtk::Box::new(Orientation::Horizontal, 8);
+    let actions = crate::workbench::buttons(&p);
     let load = gtk::Button::with_label("Load logs");
     load.add_css_class("suggested-action");
     let crashes = gtk::Button::with_label("Last crashed apps");
     let export = gtk::Button::with_label("Export filtered logs");
-    actions.append(&load);
-    actions.append(&crashes);
-    actions.append(&export);
-    p.append(&actions);
+    export.set_sensitive(false);
+    actions.insert(&load, -1);
+    actions.insert(&crashes, -1);
+    actions.insert(&export, -1);
+
     let status=label("Choose a source and select Load logs. Protected reports are skipped without an authentication prompt.","caption");
     p.append(&status);
+    let notice = crate::editor::Notice::new();
+    p.append(&notice.root);
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk::SelectionMode::Single);
@@ -104,6 +107,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         let search = search.clone();
         let priority = priority.clone();
         let status = status.clone();
+        let export = export.clone();
         let detail = detail.buffer();
         move || {
             let query = search.text().to_lowercase();
@@ -168,6 +172,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             } else {
                 results.set_visible_child_name("events");
             }
+            export.set_sensitive(!filtered.is_empty());
             *shown.borrow_mut() = filtered;
         }
     });
@@ -180,8 +185,24 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let src = source.clone();
     let per = period.clone();
     let st = status.clone();
+    let loading_results = results.clone();
+    let loading_title = empty_title.clone();
+    let loading_description = empty_description.clone();
     load.connect_clicked(move |b| {
-        let (b, data, f, st) = (b.clone(), data.clone(), f.clone(), st.clone());
+        let (b, data, f, st, notice, error_title, error_description) = (
+            b.clone(),
+            data.clone(),
+            f.clone(),
+            st.clone(),
+            notice.clone(),
+            loading_title.clone(),
+            loading_description.clone(),
+        );
+        notice.root.set_visible(false);
+        loading_title.set_text("Loading logs…");
+        loading_description
+            .set_text("Reading up to 1,000 recent records. Existing logs are never changed.");
+        loading_results.set_visible_child_name("empty");
         b.set_sensitive(false);
         st.set_text("Loading logs…");
         let (source, period) = (src.selected(), per.selected());
@@ -196,7 +217,12 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                         *data.borrow_mut() = rows;
                         f();
                     }
-                    Err(e) => st.set_text(&format!("Could not read logs: {e}")),
+                    Err(e) => {
+                        error_title.set_text("Logs unavailable");
+                        error_description.set_text("Try another source or time range. Technical details are available above.");
+                        st.set_text("Could not read logs. Try a different source or time range.");
+                        notice.show("Logs could not be loaded.", Some(&e), true);
+                    }
                 }
             },
         );

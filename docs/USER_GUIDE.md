@@ -2,7 +2,7 @@
 
 **Native Ubuntu storage, monitoring and performance settings.** Written in Rust with GTK 4 and libadwaita.
 
-Scan disk usage, preview cleanup, inspect resource pressure, manage startup entries and adjust supported desktop and memory settings. Open Tend from the dock when you need it. No embedded browser, telemetry or advertising. Closing the window keeps Tend in the dock; monitoring pauses in the background. Quit explicitly from the header menu or dock action.
+Scan disk usage, preview cleanup, inspect resource pressure, manage startup entries and adjust supported desktop and memory settings. Open Tend from the launcher or its top-panel icon when you need it. No embedded browser, telemetry or advertising. Closing the window can keep Tend available in the top panel; monitoring pauses in the background. Quit explicitly from the panel menu, header menu or dock action.
 
 ![Tend overview](../assets/overview.png)
 
@@ -14,7 +14,7 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 | **Storage** | Cancellable folder scans; allocated size, largest files, and development directories; open locations in Files. |
 | **Disk cleanup** | Manual/cron category switches, independent retention ages, cache allowances, save/discard/defaults, preview, folder rules and results. |
 | **Daily cleanup** | Separate daily-maintenance categories, Docker ages/allowance, npm log retention and verification frequency. Requires the updated system integration. |
-| **Cleanup scheduling** | Daily, weekly or numeric five-field user cron schedules; optional missed-run catch-up, saved policy and last result. Disabled until enabled and saved. |
+| **Cleanup schedule** | Daily, weekly or numeric five-field user cron schedules; optional missed-run catch-up, saved policy and last result. Disabled until enabled and saved. |
 | **System logs** | System/user journals and recent crashed apps; time, severity and text filters; selected-event details and local export. |
 | **Task Manager** | Windows 11–inspired Processes and Performance views: live searchable/sortable process table; CPU, memory, per-disk and per-adapter graphs; available GPU counters; process controls, update speed and snapshot export. |
 | **Startup & services** | Login application overrides, optional local user-service enablement, boot timing and last session-restoration report. |
@@ -22,7 +22,7 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 | **Development tools** | Docker storage/resource reports, local JSON log sizes and limits, pip cache report and npm cache verification. |
 | **Updates & reports** | Pending package list, independent stable-update action, system health, history and text/JSON export. |
 | **Recovery** | Restore saved launcher/startup/animation/service settings and the previous memory configuration. |
-| **Schedule / Activity / Appearance** | Existing daily maintenance schedule, warning notifications, journal and system/light/dark appearance. |
+| **Maintenance / Activity / Appearance** | Existing daily maintenance schedule, warning notifications, journal and system/light/dark appearance. |
 
 <details>
 <summary>Disk cleanup</summary>
@@ -37,6 +37,14 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 ![Performance settings](../assets/performance.png)
 
 </details>
+
+## Editing settings
+
+**Maintenance**, **Disk cleanup**, **Daily cleanup** and **Cleanup schedule** share a pinned footer: status on the left, **Discard changes** and **Save changes** on the right. The form scrolls independently. Save is disabled when unchanged, invalid or missing required integration. Errors preserve the draft and expose selectable technical **Details**. Discard restores the loaded or last successfully saved values without writing anything. Navigating away preserves unsaved drafts.
+
+**Restore defaults** only edits policy fields; save separately to use them. Category and retention settings have their own commit scope; folder dialogs use **Save rule**. Cleanup preview and **Clean selected…** remain separate operations with stale-preview checks and confirmation.
+
+**Appearance** saves immediately. A write failure restores the previous selection and shows an error. At narrow widths, use the navigation button in the header to open the page list. Technical reports appear after data is collected; empty and loading states explain what to do next.
 
 ## Task Manager
 
@@ -74,7 +82,7 @@ Containers, volumes, networks, tagged images, repositories, virtual environments
 
 Docker’s inventory is not an exact deletion estimate: the daemon decides unused eligibility at execution. The final root free-space difference includes concurrent writes and may be negative. User caches on another mount do not contribute to the root filesystem’s delta.
 
-**Disk cleanup → Manual & cron** and **Daily cleanup** have independent policies. Use **Save**, **Discard changes** or **Restore defaults**; defaults only change the editor until saved. Docker build cache and dangling images have separate ages (7–3650 days); npm logs and thumbnails use 1–3650 days, and Docker's allowance is 1–100 GB. Pip and Trash are whole-cache/whole-Trash actions without an age filter.
+**Disk cleanup → Manual & cron** and **Daily cleanup** have independent policies. Use **Save changes**, **Discard changes** or **Restore defaults**; defaults only change the editor until saved. Docker build cache and dangling images have separate ages (7–3650 days); npm logs and thumbnails use 1–3650 days, and Docker's allowance is 1–100 GB. Pip and Trash are whole-cache/whole-Trash actions without an age filter.
 
 Daily cleanup controls APT obsolete downloads, Docker build cache and dangling images, npm log age, and npm verification every 1–30 days. Defaults preserve 14-day Docker retention, a 5 GB allowance, 30-day npm logs and weekly verification. Daily npm cleanup retains top-level `*.log` files as its target. Daily runs do not consume manual custom-folder rules. Ubuntu’s existing temporary-file cleanup, journal limits, log rotation, Snap maintenance and SSD trimming remain in place.
 
@@ -93,7 +101,7 @@ Implementation follows the separate [Docker build-cache pruning](https://docs.do
 
 Disk cleanup includes **Add rule**, **Edit selected** and **Remove selected**. Choose a specific folder, comma-separated filename patterns (`*.log,*.tmp`), minimum age and optional recursion. Cache presets cover Firefox, Chrome, Mesa shaders, uv and npm downloads. Symlinks, other filesystems, credential/configuration folders, repositories and dependency directories are excluded. Only old regular files owned by your user are eligible; directories are retained. Rules apply to the preview and manual cleanup, and are saved separately from the root maintenance policy.
 
-**Cleanup scheduling** supports daily/weekly controls or a numeric five-field cron expression in the system timezone. It runs the saved user cleanup categories and enabled folder rules. APT remains handled by existing system maintenance. Enabling a schedule authorizes automatic deletion under that saved policy, including Trash if selected. Review the preview first.
+**Cleanup schedule** supports daily/weekly controls or a numeric five-field cron expression in the system timezone. It runs the saved user cleanup categories and enabled folder rules. APT remains handled by existing system maintenance. Enabling a schedule authorizes automatic deletion under that saved policy, including Trash if selected. Review the preview first.
 
 Optional catch-up checks every 15 minutes and at startup, with a 20-minute boot grace period. Only the latest due occurrence runs after downtime; successful occurrences are deduplicated and failures receive at most three attempts per occurrence. A shared user lock prevents overlapping Tend cleanup jobs. Runs defer while the existing system maintenance service is active. Existing unrelated crontab entries are preserved. Disable and save to remove only Tend’s marked block. These jobs never run updates or request a reboot.
 
@@ -107,7 +115,7 @@ The reader fetches up to 1,000 recent records on demand, displays up to 500 matc
 
 ## Dock behavior
 
-**Appearance → Close to dock** is enabled by default. The title-bar close button minimizes the existing window and keeps its dock identity. Open the dock icon to return. Resource sampling stops while minimized or unfocused; expensive reports remain on demand. Choose **Quit Tend** from the header menu or the dock’s explicit action to exit fully. Dock Quit, Alt+F4 and the header’s Quit Tend action always exit. Disable Close to dock to make the title-bar button exit too. No login background service is added.
+**Appearance → Close to top panel** is enabled by default. When the desktop supports StatusNotifierItem/AppIndicator icons, the title-bar close button hides the window and the panel menu offers **Open Tend** and **Quit Tend**. If the panel host is unavailable, Close minimizes to the dock instead. If the host disappears while Tend is hidden, Tend shows its window so it remains reachable. Sampling stops while hidden, minimized, off-page or unfocused. Dock Quit, Alt+F4 and every **Quit Tend** action exit. Disable Close to top panel to make title-bar Close exit too. No login service or daemon is added; the icon exists while Tend is running.
 
 ## Tuning and recovery
 
@@ -125,7 +133,7 @@ Recovery restores individual user changes; undo repeated edits to the same setti
 
 The independent update action refreshes APT metadata and uses the configured unattended-upgrades repository policy. It retains package holds and installs only eligible updates. It requires AC power, shares the maintenance lock, and disables unattended-upgrades’ automatic reboot for that run. It does not call the scheduled maintenance service or its post-maintenance restart hook.
 
-The **existing** scheduled maintenance policy is separate. Schedule still displays its restart setting so it is visible and editable. Merely opening, upgrading or using Tend’s new tools does not change it. Tend never reads or stores your keyring password.
+The **existing** scheduled maintenance policy is separate. Maintenance still displays its restart setting so it is visible and editable. Merely opening, upgrading or using Tend’s new tools does not change it. Tend never reads or stores your keyring password.
 
 ## Install or upgrade
 
@@ -148,7 +156,7 @@ The build uses one job at a time. Regular installation and updates replace the i
 
 The trusted system helper must already be installed. If it is missing, the installer stops with an explanation instead of opening an authentication prompt. A first-time administrator setup for the existing maintenance deployment can be performed explicitly with `pkexec /usr/bin/python3 "$PWD/scripts/install.py"`; this is separate from routine interface updates. Helper changes also require an explicit administrator-managed upgrade, and are never automatically attempted by the user installer.
 
-Choose Quit Tend, then reopen Tend to use an interface update. Open it from the dock or application launcher.
+Choose Quit Tend, then reopen Tend to use an interface update. Open it from the application launcher or panel icon.
 
 ## Daily policy integration
 
@@ -229,7 +237,7 @@ Use Recovery first if you also want to undo tuning changes. The uninstaller pres
 pkexec /usr/bin/python3 "$PWD/scripts/uninstall.py"
 ```
 
-Disable and save the cleanup schedule in the UI first to remove Tend’s cron block. Remove the user interface first with `rm -- "$HOME/scripts/tend" "$HOME/scripts/tend-worker" "$HOME/.local/share/applications/io.github.jtmb.Tend.desktop" "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg"`. The administrator uninstall then restores the original maintenance integration and schedules. Unpin Tend from the dock afterward.
+Disable and save the cleanup schedule in the UI first to remove Tend’s cron block. Remove the user interface first with `rm -- "$HOME/scripts/tend" "$HOME/scripts/tend-worker" "$HOME/.local/share/applications/io.github.jtmb.Tend.desktop" "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend-symbolic.svg"`. The administrator uninstall then restores the original maintenance integration and schedules. Unpin Tend from the dock afterward.
 
 ## License
 

@@ -184,6 +184,7 @@ struct Ui {
     title: gtk::Label,
     details: gtk::Label,
     scale: gtk::Label,
+    legend: gtk::Label,
     graph: gtk::DrawingArea,
     selected: Rc<RefCell<String>>,
     info: gtk::Label,
@@ -284,6 +285,17 @@ impl Ui {
             return;
         };
         self.title.set_text(&trace.title);
+        self.legend.set_text(if key.starts_with("net:") {
+            "60 samples · oldest → newest · receive: solid · send: dashed"
+        } else if key.starts_with("disk:") {
+            "60 samples · oldest → newest · read: solid · write: dashed"
+        } else if key.as_str() == "memory" {
+            "60 samples · oldest → newest · physical memory in use"
+        } else if key.starts_with("gpu:") {
+            "60 samples · oldest → newest · GPU utilization"
+        } else {
+            "60 samples · oldest → newest · total CPU utilization"
+        });
         self.details.set_text(&trace.detail);
         self.scale.set_text(&if trace.percent {
             "100%".into()
@@ -301,10 +313,10 @@ impl Ui {
 }
 pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let root = column(14);
-    root.set_margin_top(22);
-    root.set_margin_bottom(22);
-    root.set_margin_start(22);
-    root.set_margin_end(22);
+    root.set_margin_top(24);
+    root.set_margin_bottom(24);
+    root.set_margin_start(24);
+    root.set_margin_end(24);
     root.append(&label("Task Manager", "page-title"));
     let tabs = gtk::Stack::builder().vexpand(true).hexpand(true).build();
     let switcher = gtk::StackSwitcher::builder()
@@ -316,7 +328,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     root.append(&summary);
     root.append(&tabs);
     let process = column(10);
-    let toolbar = gtk::Box::new(Orientation::Horizontal, 8);
+    let toolbar = column(8);
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search name, PID or user")
         .hexpand(true)
@@ -327,8 +339,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     end.add_css_class("destructive-action");
     quit.set_sensitive(false);
     end.set_sensitive(false);
-    toolbar.append(&quit);
-    toolbar.append(&end);
+    let actions = crate::workbench::buttons(&toolbar);
+    actions.insert(&quit, -1);
+    actions.insert(&end, -1);
     process.append(&toolbar);
     let store = gio::ListStore::new::<glib::BoxedAnyObject>();
     let query = Rc::new(RefCell::new(String::new()));
@@ -411,7 +424,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .child(&table)
         .vexpand(true)
         .hexpand(true)
-        .min_content_height(300)
+        .min_content_height(240)
         .build();
     table_scroll.add_css_class("card");
     process.append(&table_scroll);
@@ -456,10 +469,11 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .build();
     graph.add_css_class("tm-chart");
     panel.append(&graph);
-    panel.append(&label(
-        "60 samples · oldest → newest · receive / send shown as two lines for network adapters",
+    let legend = label(
+        "60 samples · oldest → newest · total CPU utilization",
         "caption",
-    ));
+    );
+    panel.append(&legend);
     let details = label("Collecting…", "title-4");
     panel.append(&details);
     panel.append(&label("GPU usage appears when a readable kernel utilization counter is available. Virtual block devices are excluded to avoid counting disk traffic twice.","caption"));
@@ -485,18 +499,18 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .build();
     performance.append(&detail_scroll);
     tabs.add_titled(&performance, Some("performance"), "Performance");
-    let controls = gtk::Box::new(Orientation::Horizontal, 8);
+    let controls = crate::workbench::buttons(&root);
     let speed_label = label("Update speed", "caption");
     speed_label.set_wrap(false);
-    controls.append(&speed_label);
+    controls.insert(&speed_label, -1);
     let speed = gtk::DropDown::from_strings(&["Paused", "1 second", "2 seconds", "5 seconds"]);
     speed.set_selected(2);
-    controls.append(&speed);
+    controls.insert(&speed, -1);
     let refresh = gtk::Button::with_label("Refresh now");
-    controls.append(&refresh);
+    controls.insert(&refresh, -1);
     let export = gtk::Button::with_label("Export snapshot");
-    controls.append(&export);
-    root.append(&controls);
+    controls.insert(&export, -1);
+
     let status = label(
         "Monitoring stops when you leave this page or close Tend.",
         "caption",
@@ -515,6 +529,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         title,
         details,
         scale,
+        legend,
         graph: graph.clone(),
         selected: selected.clone(),
         info,
@@ -558,6 +573,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                 if line == 0 { 1. } else { 0.55 },
             );
             cr.set_line_width(2.);
+            cr.set_dash(if line == 0 { &[] } else { &[5., 4.] }, 0.);
             for (i, p) in t.points.iter().enumerate() {
                 let x = (60 - t.points.len() + i) as f64 / 59. * width;
                 let y = height * (1. - (if line == 0 { p.0 } else { p.1 } / max).clamp(0., 1.));
@@ -703,7 +719,10 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                 .and_then(|s| s.downcast::<gtk::gdk::Toplevel>().ok())
                 .map(|s| s.state().contains(gtk::gdk::ToplevelState::MINIMIZED))
                 .unwrap_or(false);
-            let active = window.upgrade().map(|w| w.is_active()).unwrap_or(false);
+            let active = window
+                .upgrade()
+                .map(|w| w.is_active() && w.is_visible() && w.is_mapped())
+                .unwrap_or(false);
             if !active || minimized || stack.visible_child_name().as_deref() != Some("task-manager")
             {
                 data.borrow_mut().previous = None;
@@ -738,6 +757,8 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     });
     let focused = start.clone();
     win.connect_is_active_notify(move |_| focused());
+    let visible = start.clone();
+    win.connect_visible_notify(move |_| visible());
     let on_page = start.clone();
     stack.connect_visible_child_name_notify(move |_| on_page());
     speed.connect_selected_notify(move |_| start());

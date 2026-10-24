@@ -47,7 +47,7 @@ engine.write_text(source)
 for name,target in [('tend','/usr/local/bin/tend'),('tend-admin','/usr/local/libexec/tend-admin'),('tend-worker','/usr/local/libexec/tend-worker')]:
     p=Path(target);p.parent.mkdir(parents=True,exist_ok=True)
     temporary=p.with_suffix('.new');shutil.copyfile(root/'target/release'/name, temporary);temporary.chmod(0o755);temporary.replace(p)
-for name,target in [('io.github.jtmb.Tend.policy','/usr/share/polkit-1/actions/io.github.jtmb.Tend.policy'),('io.github.jtmb.Tend.svg','/usr/local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg'),('io.github.jtmb.Tend.desktop','/usr/local/share/applications/io.github.jtmb.Tend.desktop')]:
+for name,target in [('io.github.jtmb.Tend-symbolic.svg','/usr/local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend-symbolic.svg'),('io.github.jtmb.Tend.policy','/usr/share/polkit-1/actions/io.github.jtmb.Tend.policy'),('io.github.jtmb.Tend.svg','/usr/local/share/icons/hicolor/scalable/apps/io.github.jtmb.Tend.svg'),('io.github.jtmb.Tend.desktop','/usr/local/share/applications/io.github.jtmb.Tend.desktop')]:
     p=Path(target);p.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(root/'assets'/name,p);p.chmod(0o644)
 Path('/etc/tend').mkdir(mode=0o755,exist_ok=True)
 for directory in ['/etc/systemd/system/dev-maintenance.timer.d','/etc/systemd/system/dev-maintenance.service.d']:
