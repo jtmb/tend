@@ -2,7 +2,7 @@ use crate::{job, label, page, privileged, row, scroll};
 use adw::prelude::*;
 use gtk::{glib, Orientation};
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     path::PathBuf,
     rc::Rc,
     sync::{
@@ -13,7 +13,7 @@ use std::{
 };
 use tend::{preferences as pref, workstation as w};
 
-fn text_panel(parent: &gtk::Box) -> gtk::TextView {
+pub(crate) fn text_panel(parent: &gtk::Box) -> gtk::TextView {
     let view = gtk::TextView::builder()
         .editable(false)
         .cursor_visible(false)
@@ -33,7 +33,7 @@ fn text_panel(parent: &gtk::Box) -> gtk::TextView {
     parent.append(&sc);
     view
 }
-fn buttons(parent: &gtk::Box) -> gtk::FlowBox {
+pub(crate) fn buttons(parent: &gtk::Box) -> gtk::FlowBox {
     let b = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .row_spacing(8)
@@ -47,12 +47,12 @@ fn buttons(parent: &gtk::Box) -> gtk::FlowBox {
     parent.append(&b);
     b
 }
-fn button(parent: &gtk::FlowBox, title: &str) -> gtk::Button {
+pub(crate) fn button(parent: &gtk::FlowBox, title: &str) -> gtk::Button {
     let b = gtk::Button::with_label(title);
     parent.insert(&b, -1);
     b
 }
-fn confirm<F: Fn() + 'static>(
+pub(crate) fn confirm<F: Fn() + 'static>(
     win: &adw::ApplicationWindow,
     title: &str,
     body: &str,
@@ -79,7 +79,7 @@ fn confirm<F: Fn() + 'static>(
     });
     d.present();
 }
-fn exports(parent: &gtk::Box, view: &gtk::TextView) {
+pub(crate) fn exports(parent: &gtk::Box, view: &gtk::TextView) {
     let bar = buttons(parent);
     let status = label(
         "Reports are saved locally. Review their contents before sharing.",
@@ -142,7 +142,8 @@ fn choose_folder(win: &adw::ApplicationWindow, entry: &gtk::Entry) {
 
 pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     storage(stack, win);
-    cleanup(stack, win);
+    crate::cleanup_policy_ui::manual(stack, win);
+    crate::cleanup_policy_ui::daily(stack, win);
     crate::cleanup_ui::schedule_page(stack);
     crate::log_reader::add(stack, win);
     crate::task_manager::add(stack, win);
@@ -284,202 +285,6 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         );
     });
     stack.add_titled(&scroll(&p), Some("storage"), "Storage");
-}
-#[derive(Clone)]
-struct CleanupWidgets {
-    checks: Vec<gtk::CheckButton>,
-    age: gtk::SpinButton,
-    keep: gtk::SpinButton,
-}
-impl CleanupWidgets {
-    fn value(&self) -> w::Cleanup {
-        w::Cleanup {
-            apt: self.checks[0].is_active(),
-            docker_build: self.checks[1].is_active(),
-            docker_images: self.checks[2].is_active(),
-            npm_logs: self.checks[3].is_active(),
-            pip: self.checks[4].is_active(),
-            thumbnails: self.checks[5].is_active(),
-            trash: self.checks[6].is_active(),
-            age_days: self.age.value_as_int() as u32,
-            keep_gb: self.keep.value_as_int() as u32,
-        }
-    }
-    fn sensitive(&self, on: bool) {
-        for c in &self.checks {
-            c.set_sensitive(on);
-        }
-        self.age.set_sensitive(on);
-        self.keep.set_sensitive(on);
-    }
-}
-fn cleanup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    let p=page("Disk cleanup","Preview selected categories before deleting. These manual cleanup preferences do not change the existing daily maintenance policy.");
-    let config = w::Cleanup::load();
-    let group = adw::PreferencesGroup::new();
-    let mut checks = vec![];
-    for (title, desc, on) in [
-        (
-            "Obsolete APT downloads",
-            "Packages no longer available from configured repositories",
-            config.apt,
-        ),
-        (
-            "Unused Docker build cache",
-            "Older than the selected age, with a cache allowance",
-            config.docker_build,
-        ),
-        (
-            "Dangling Docker images",
-            "Older than the selected age; tagged images and volumes are preserved",
-            config.docker_images,
-        ),
-        (
-            "npm diagnostic logs",
-            "Only logs older than 30 days; cached packages are preserved",
-            config.npm_logs,
-        ),
-        (
-            "Pip download cache",
-            "Remove all downloaded packages and built wheels; installed environments are preserved",
-            config.pip,
-        ),
-        (
-            "Old thumbnails",
-            "Older than the selected age; regenerated when needed",
-            config.thumbnails,
-        ),
-        (
-            "Empty Trash",
-            "Permanently delete all items in the desktop Trash",
-            config.trash,
-        ),
-    ] {
-        let c = gtk::CheckButton::builder().active(on).build();
-        row(&group, title, desc, &c);
-        checks.push(c);
-    }
-    p.append(&group);
-    let policy = adw::PreferencesGroup::builder()
-        .title("Manual cleanup preferences")
-        .build();
-    let age = gtk::SpinButton::with_range(7., 365., 1.);
-    age.set_value(config.age_days as f64);
-    let keep = gtk::SpinButton::with_range(1., 100., 1.);
-    keep.set_value(config.keep_gb as f64);
-    row(
-        &policy,
-        "Minimum age (days)",
-        "Docker cache, dangling images and thumbnails",
-        &age,
-    );
-    row(
-        &policy,
-        "Docker build-cache allowance (GB)",
-        "Docker applies this allowance to unused build cache",
-        &keep,
-    );
-    p.append(&policy);
-    let widgets = CleanupWidgets { checks, age, keep };
-    let bar = buttons(&p);
-    let save = button(&bar, "Save preferences");
-    let preview = button(&bar, "Preview cleanup");
-    preview.add_css_class("suggested-action");
-    let apply = button(&bar, "Clean selected…");
-    apply.add_css_class("destructive-action");
-    apply.set_sensitive(false);
-    let view = text_panel(&p);
-    view.buffer()
-        .set_text("Preview is required. Cleanup does not install updates or restart the computer.");
-    exports(&p, &view);
-    let approved = Rc::new(RefCell::new(None::<String>));
-    let changed: Rc<dyn Fn()> = Rc::new({
-        let apply = apply.clone();
-        let approved = approved.clone();
-        move || {
-            apply.set_sensitive(false);
-            approved.borrow_mut().take();
-        }
-    });
-    let extra = crate::cleanup_ui::section(win, changed);
-    p.append(&extra);
-    p.reorder_child_after(&extra, Some(&policy));
-    for c in &widgets.checks {
-        let a = apply.clone();
-        let plan = approved.clone();
-        c.connect_toggled(move |_| {
-            a.set_sensitive(false);
-            plan.borrow_mut().take();
-        });
-    }
-    for c in [&widgets.age, &widgets.keep] {
-        let a = apply.clone();
-        let plan = approved.clone();
-        c.connect_value_changed(move |_| {
-            a.set_sensitive(false);
-            plan.borrow_mut().take();
-        });
-    }
-    let (w, v) = (widgets.clone(), view.clone());
-    save.connect_clicked(move |_| {
-        v.buffer().set_text(
-            &w.value()
-                .save()
-                .map(|_| "Manual cleanup preferences saved.".into())
-                .unwrap_or_else(|e| e),
-        );
-    });
-    let (widgets_p, apply_p, view_p, plan) = (
-        widgets.clone(),
-        apply.clone(),
-        view.clone(),
-        approved.clone(),
-    );
-    preview.connect_clicked(move |b| {
-        let config = widgets_p.value();
-        b.set_sensitive(false);
-        apply_p.set_sensitive(false);
-        widgets_p.sensitive(false);
-        let (b, a, v, w, plan) = (
-            b.clone(),
-            apply_p.clone(),
-            view_p.clone(),
-            widgets_p.clone(),
-            plan.clone(),
-        );
-        v.buffer().set_text("Checking selected categories…");
-        job(
-            move || {
-                let rules = tend::cleanup_rules::Policy::load()?;
-                let preview = format!(
-                    "{}\n{}",
-                    w::cleanup_preview(&config)?,
-                    tend::cleanup_rules::preview(&rules)?
-                );
-                Ok(
-                    serde_json::json!({"preview":preview,"config":config,"rules":rules})
-                        .to_string(),
-                )
-            },
-            move |r| {
-                b.set_sensitive(true);
-                w.sensitive(true);
-                match r {
-                    Ok(s) => {
-                        let result: serde_json::Value = serde_json::from_str(&s).unwrap();
-                        v.buffer()
-                            .set_text(result["preview"].as_str().unwrap_or("Preview unavailable"));
-                        *plan.borrow_mut() = Some(s);
-                        a.set_sensitive(true);
-                    }
-                    Err(e) => v.buffer().set_text(&e),
-                }
-            },
-        );
-    });
-    let parent = win.clone();
-    apply.connect_clicked(move|b|{let Some(json)=approved.borrow().clone()else{return};let (b,v,preview,widgets,approved)=(b.clone(),view.clone(),preview.clone(),widgets.clone(),approved.clone());confirm(&parent,"Delete the selected cache and Trash contents?","This permanently removes the categories shown in your preview. Docker eligibility is rechecked at execution. No updates or restart will run.","Clean selected",true,move||{b.set_sensitive(false);preview.set_sensitive(false);widgets.sensitive(false);approved.borrow_mut().take();v.buffer().set_text("Cleaning selected categories…");let (b,v,preview,widgets)=(b.clone(),v.clone(),preview.clone(),widgets.clone());let json=json.clone();job(move||{let _guard=tend::cleanup_rules::cleanup_lock()?;let plan:serde_json::Value=serde_json::from_str(&json).map_err(|e|e.to_string())?;let rules:tend::cleanup_rules::Policy=serde_json::from_value(plan["rules"].clone()).map_err(|e|e.to_string())?;let base=privileged("cleanup",Some(plan["config"].to_string()))?;match tend::cleanup_rules::apply(&rules){Ok(extra)=>Ok(format!("{base}\n{extra}")),Err(e)=>Err(format!("{base}\nAdditional rule failures:\n{e}"))}},move|r|{b.set_sensitive(false);preview.set_sensitive(true);widgets.sensitive(true);let text=r.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}"));let _=w::record("cleanup-result",&text);v.buffer().set_text(&text);});});});
-    stack.add_titled(&scroll(&p), Some("cleanup"), "Disk cleanup");
 }
 fn startup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let p=page("Startup & services","Manage login applications and optional services installed in your user account. Changes affect future activation; they do not close running apps.");

@@ -1,0 +1,85 @@
+[
+  {
+    "name": "legacy-defaults",
+    "policy": {},
+    "valid": true
+  },
+  {
+    "name": "independent-values",
+    "policy": {
+      "build_days": 21,
+      "image_days": 60,
+      "npm_log_days": 45,
+      "keep_gb": 8,
+      "npm_verify_days": 3
+    },
+    "valid": true
+  },
+  {
+    "name": "disabled",
+    "policy": {
+      "apt": false,
+      "docker_build": false,
+      "docker_images": false,
+      "npm_logs": false,
+      "npm_verify": false
+    },
+    "valid": true
+  },
+  {
+    "name": "new-version",
+    "policy": {
+      "version": 2
+    },
+    "valid": false
+  },
+  {
+    "name": "unknown-field",
+    "policy": {
+      "command": "reboot"
+    },
+    "valid": false
+  },
+  {
+    "name": "wrong-bool",
+    "policy": {
+      "apt": 1
+    },
+    "valid": false
+  },
+  {
+    "name": "build-low",
+    "policy": {
+      "build_days": 6
+    },
+    "valid": false
+  },
+  {
+    "name": "image-high",
+    "policy": {
+      "image_days": 3651
+    },
+    "valid": false
+  },
+  {
+    "name": "keep-low",
+    "policy": {
+      "keep_gb": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "log-low",
+    "policy": {
+      "npm_log_days": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "verify-high",
+    "policy": {
+      "npm_verify_days": 31
+    },
+    "valid": false
+  }
+]

@@ -46,3 +46,22 @@ Inspect decoded scenes after every completed action, then review the GIF inside
 the rendered README at desktop and narrow widths. Check for private data,
 clipped controls, readable text and a working loop. The static gallery provides
 a still-image alternative. Capture may take longer than playback on a busy host.
+
+## Policy editor and design checks
+
+With a **fresh** prepared directory and the same isolated environment above,
+set `TEND_QA_DIR="$demo_dir/qa"` as well as `TEND_DEMO_DIR` to run the native
+interaction checks instead of GIF recording. This mode intentionally edits only
+the fixture policy files: save/reload, discard, unsaved defaults, stale previews,
+independent policies, confirmation cancellation, and malformed-file errors.
+It captures all 15 pages at desktop/dark and narrow/light sizes, both cleanup
+page bottoms, and the rule/confirmation/error states. It exits the separate
+preview through the real Quit action. No cleanup, updates, cron save, system
+policy save or process action is activated. Cache files and sample journal
+contents remain unchanged; the policy-file manifest will differ by design.
+Do not reuse this intentionally corrupted QA home for the public demo.
+
+`cargo test --locked -j 1 --all-targets` skips the legacy isolated file-deletion
+test by default. It is marked ignored because preview-only verification must
+retain fixtures. Daily-runner command tests use mocks; they never spawn the
+listed maintenance commands. Python checks: `python3 -m unittest discover -s tests -v`.

@@ -226,9 +226,10 @@ pub fn scan_text(s: &Scan) -> String {
     }
     text
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Cleanup {
+    pub version: u32,
     pub apt: bool,
     pub docker_build: bool,
     pub docker_images: bool,
@@ -238,10 +239,14 @@ pub struct Cleanup {
     pub trash: bool,
     pub age_days: u32,
     pub keep_gb: u32,
+    pub image_days: Option<u32>,
+    pub thumbnail_days: Option<u32>,
+    pub npm_log_days: u32,
 }
 impl Default for Cleanup {
     fn default() -> Self {
         Self {
+            version: 1,
             apt: true,
             docker_build: true,
             docker_images: true,
@@ -251,26 +256,79 @@ impl Default for Cleanup {
             trash: false,
             age_days: 14,
             keep_gb: 5,
+            image_days: None,
+            thumbnail_days: None,
+            npm_log_days: 30,
         }
     }
 }
 impl Cleanup {
     pub fn validate(&self) -> Result<(), String> {
-        if !(7..=365).contains(&self.age_days) || !(1..=100).contains(&self.keep_gb) {
-            Err("Age must be 7–365 days; build-cache allowance 1–100 GB.".into())
+        if self.version != 1
+            || !(7..=3650).contains(&self.age_days)
+            || !(1..=100).contains(&self.keep_gb)
+            || !(7..=3650).contains(&self.image_days())
+            || !(1..=3650).contains(&self.thumbnail_days())
+            || !(1..=3650).contains(&self.npm_log_days)
+        {
+            Err("Docker ages must be 7–3650 days, user-cache ages 1–3650 days, and build-cache allowance 1–100 GB.".into())
         } else {
             Ok(())
         }
     }
-    pub fn load() -> Self {
-        fs::read_to_string(home().join(".config/tend/cleanup.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .filter(|s: &Self| s.validate().is_ok())
-            .unwrap_or_default()
+    pub fn image_days(&self) -> u32 {
+        self.image_days.unwrap_or(self.age_days)
+    }
+    pub fn thumbnail_days(&self) -> u32 {
+        self.thumbnail_days.unwrap_or(self.age_days)
+    }
+    pub fn docker_commands(&self) -> Vec<(&'static str, Vec<String>)> {
+        let mut commands = vec![];
+        if self.docker_build {
+            commands.push((
+                "Docker build cache",
+                vec![
+                    "builder".into(),
+                    "prune".into(),
+                    "--all".into(),
+                    "--force".into(),
+                    "--filter".into(),
+                    format!("until={}h", self.age_days * 24),
+                    "--keep-storage".into(),
+                    format!("{}GB", self.keep_gb),
+                ],
+            ));
+        }
+        if self.docker_images {
+            commands.push((
+                "Docker dangling images",
+                vec![
+                    "image".into(),
+                    "prune".into(),
+                    "--force".into(),
+                    "--filter".into(),
+                    format!("until={}h", self.image_days() * 24),
+                ],
+            ));
+        }
+        commands
+    }
+    pub fn load() -> Result<Self, String> {
+        Self::read_from(&home().join(".config/tend/cleanup.json"))
+    }
+    pub fn read_from(path: &Path) -> Result<Self, String> {
+        let value = match fs::read_to_string(path) {
+            Ok(s) => serde_json::from_str::<Self>(&s)
+                .map_err(|e| format!("Saved cleanup policy is invalid: {e}"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => return Err(format!("Cannot read saved cleanup policy: {e}")),
+        };
+        value.validate()?;
+        Ok(value)
     }
     pub fn save(&self) -> Result<(), String> {
         self.validate()?;
+        let _lock = crate::cleanup_rules::cleanup_lock()?;
         private_write(
             &home().join(".config/tend/cleanup.json"),
             &serde_json::to_string_pretty(self).unwrap(),
@@ -282,6 +340,9 @@ fn cache() -> PathBuf {
 }
 
 fn old_files(root: &Path, days: u32) -> Vec<PathBuf> {
+    if root.canonicalize().map(|p| p != root).unwrap_or(true) {
+        return vec![];
+    }
     let mut files = vec![];
     let mut todo = vec![root.to_owned()];
     let cutoff = now().saturating_sub(days as u64 * 86400);
@@ -309,10 +370,18 @@ fn old_files(root: &Path, days: u32) -> Vec<PathBuf> {
 fn cache_roots(c: &Cleanup) -> Vec<(&'static str, PathBuf, u32)> {
     let mut r = vec![];
     if c.npm_logs {
-        r.push(("npm diagnostic logs", home().join(".npm/_logs"), 30));
+        r.push((
+            "npm diagnostic logs",
+            home().join(".npm/_logs"),
+            c.npm_log_days,
+        ));
     }
     if c.thumbnails {
-        r.push(("Old thumbnails", cache().join("thumbnails"), c.age_days));
+        r.push((
+            "Old thumbnails",
+            cache().join("thumbnails"),
+            c.thumbnail_days(),
+        ));
     }
     r
 }
@@ -333,7 +402,7 @@ pub fn cleanup_preview(c: &Cleanup) -> Result<String, String> {
             "Docker inventory (usage is not a deletion estimate):\n{}\n\n",
             command("/usr/bin/docker", &["system", "df"])
         ));
-        s.push_str(&format!("Selected: {}{}\nOnly unused build cache / dangling images older than {} days. Docker decides eligibility at execution. Containers, volumes and tagged images are preserved.\n\n",if c.docker_build{"build cache "}else{""},if c.docker_images{"dangling images"}else{""},c.age_days));
+        s.push_str(&format!("Selected: {}{}\nBuild-cache age: {} days · dangling-image creation age: {} days. Docker decides eligibility at execution. Containers, volumes and tagged images are preserved.\n\n",if c.docker_build{"build cache "}else{""},if c.docker_images{"dangling images"}else{""},c.age_days,c.image_days()));
     }
     for (title, root, age) in cache_roots(c) {
         let files = old_files(&root, age);
@@ -380,6 +449,9 @@ pub(crate) fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<boo
             unix::ffi::OsStrExt,
         },
     };
+    if root.canonicalize().map(|p| p != root).unwrap_or(true) {
+        return Err("Cache root contains a symbolic link or is unavailable".into());
+    }
     let rel = path.strip_prefix(root).map_err(|e| e.to_string())?;
     let parts: Vec<_> = rel.components().collect();
     if parts.is_empty()
@@ -442,7 +514,63 @@ pub(crate) fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<boo
     }
     Ok(true)
 }
+fn daily_log_candidates(root: &Path, days: u32) -> Result<Vec<PathBuf>, String> {
+    if !root.exists() {
+        return Ok(vec![]);
+    }
+    if root.canonicalize().map(|p| p != root).unwrap_or(true) {
+        return Err("npm log folder contains a symbolic link".into());
+    }
+    let cutoff = now().saturating_sub(days as u64 * 86400);
+    let mut files = vec![];
+    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let m = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        if path.extension().and_then(|s| s.to_str()) == Some("log")
+            && m.is_file()
+            && !m.file_type().is_symlink()
+            && m.mtime() >= 0
+            && (m.mtime() as u64) < cutoff
+        {
+            files.push(path);
+        }
+    }
+    Ok(files)
+}
+/// Daily npm cleanup retains the existing top-level *.log selection.
+pub fn daily_npm_logs(days: u32) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Deletion is disabled in documentation recordings".into());
+    }
+    if !(1..=3650).contains(&days) || unsafe { libc::geteuid() } == 0 {
+        return Err("Invalid user log cleanup request".into());
+    }
+    let root = home().join(".npm/_logs");
+    let mut count = 0;
+    let mut errors = vec![];
+    for path in daily_log_candidates(&root, days)? {
+        match remove_old_file(&root, &path, days) {
+            Ok(true) => count += 1,
+            Ok(false) => {}
+            Err(e) => errors.push(e),
+        }
+    }
+    if errors.is_empty() {
+        Ok(format!("npm diagnostic logs: removed {count} expired logs"))
+    } else {
+        Err(format!(
+            "npm logs: removed {count}; failures: {}",
+            errors.join("; ")
+        ))
+    }
+}
 pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Deletion is disabled in documentation recordings.".into());
+    }
     c.validate()?;
     if output("/usr/bin/id", &["-u"])? == "0" {
         return Err("User cleanup cannot run as root".into());
@@ -457,33 +585,11 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     };
     let before = available();
     let mut log = String::new();
-    let hours = format!("until={}h", c.age_days * 24);
-    let allowance = format!("{}GB", c.keep_gb);
-    if c.docker_build {
+    for (title, args) in c.docker_commands() {
+        let refs: Vec<_> = args.iter().map(String::as_str).collect();
         log.push_str(&format!(
-            "Docker build cache:\n{}\n",
-            run_cleanup(
-                "/usr/bin/docker",
-                &[
-                    "builder",
-                    "prune",
-                    "--all",
-                    "--force",
-                    "--filter",
-                    &hours,
-                    "--keep-storage",
-                    &allowance
-                ]
-            )
-        ));
-    }
-    if c.docker_images {
-        log.push_str(&format!(
-            "Docker dangling images:\n{}\n",
-            run_cleanup(
-                "/usr/bin/docker",
-                &["image", "prune", "--force", "--filter", &hours]
-            )
+            "{title}:\n{}\n",
+            run_cleanup("/usr/bin/docker", &refs)
         ));
     }
     for (title, root, days) in cache_roots(c) {
@@ -1005,6 +1111,31 @@ mod boundary_tests {
         assert!(cache.join("original-sub/log").exists());
     }
     #[test]
+    fn daily_npm_preview_selects_only_expired_top_level_regular_logs() {
+        let t = Scratch::new();
+        let root = t.0.join("logs");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        t.old_file("logs/old.log");
+        t.old_file("logs/old.cache");
+        t.old_file("logs/sub/nested.log");
+        fs::write(root.join("recent.log"), "new").unwrap();
+        symlink(root.join("old.log"), root.join("linked.log")).unwrap();
+        assert_eq!(
+            daily_log_candidates(&root, 14).unwrap(),
+            vec![root.join("old.log")]
+        );
+        for file in [
+            "old.log",
+            "old.cache",
+            "sub/nested.log",
+            "recent.log",
+            "linked.log",
+        ] {
+            assert!(root.join(file).exists());
+        }
+    }
+    #[test]
+    #[ignore = "Deletes isolated test files; requires explicit cleanup-test opt-in"]
     fn cleanup_removes_only_old_regular_files_inside_the_selected_root() {
         let t = Scratch::new();
         let root = t.0.join("cache");
@@ -1054,5 +1185,94 @@ mod boundary_tests {
         .unwrap();
         assert!(result.cancelled);
         assert_eq!(result.files, 0);
+    }
+}
+
+#[cfg(test)]
+mod cleanup_policy_tests {
+    use super::*;
+    #[test]
+    fn legacy_policy_keeps_selections_and_shared_retention() {
+        let c: Cleanup = serde_json::from_str(
+            r#"{"apt":false,"docker_build":false,"trash":true,"age_days":45,"keep_gb":9}"#,
+        )
+        .unwrap();
+        c.validate().unwrap();
+        assert!(!c.apt && !c.docker_build && c.trash);
+        assert_eq!(
+            (
+                c.age_days,
+                c.image_days(),
+                c.thumbnail_days(),
+                c.npm_log_days
+            ),
+            (45, 45, 45, 30)
+        );
+        let reloaded: Cleanup = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(c, reloaded);
+    }
+    #[test]
+    fn independent_retention_reaches_exact_docker_commands() {
+        let c = Cleanup {
+            age_days: 21,
+            image_days: Some(60),
+            thumbnail_days: Some(90),
+            npm_log_days: 45,
+            keep_gb: 8,
+            ..Default::default()
+        };
+        let commands = c.docker_commands();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(
+            commands[0].1,
+            vec![
+                "builder",
+                "prune",
+                "--all",
+                "--force",
+                "--filter",
+                "until=504h",
+                "--keep-storage",
+                "8GB"
+            ]
+        );
+        assert_eq!(
+            commands[1].1,
+            vec!["image", "prune", "--force", "--filter", "until=1440h"]
+        );
+        assert_eq!(cache_roots(&c)[0].2, 45);
+        assert!(Cleanup {
+            docker_build: false,
+            docker_images: false,
+            ..c
+        }
+        .docker_commands()
+        .is_empty());
+    }
+    #[test]
+    fn invalid_saved_policy_never_falls_back_to_enabled_defaults() {
+        let root = PathBuf::from(format!(
+            "/tmp/opencode/tend-policy-test-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("cleanup.json");
+        assert!(Cleanup::read_from(&path).is_ok());
+        for (i, text) in [
+            "{",
+            r#"{"version":2}"#,
+            r#"{"keep_gb":0}"#,
+            r#"{"command":"reboot"}"#,
+            r#"{"npm_log_days":0}"#,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let fixture = root.join(format!("invalid-{i}.json"));
+            fs::write(&fixture, text).unwrap();
+            assert!(Cleanup::read_from(&fixture).is_err());
+            assert_eq!(fs::read_to_string(&fixture).unwrap(), *text);
+        }
     }
 }

@@ -14,12 +14,12 @@ Goal: deliver the approved storage, monitoring, tuning and recovery tools in a l
 - No scan runs automatically when Tend opens. Full scans require an explicit action and can be cancelled.
 - Monitoring samples only while its page is selected and Tend is focused, without a new service.
 - Cache previews are advisory snapshots; Docker determines unused eligibility at execution. Trash is an explicit all-items operation.
-- Cleanup preferences govern the manual action. The existing daily maintenance policy remains independent and is displayed separately.
+- Independent typed policies govern manual/user-cron and daily maintenance cleanup. Each has its own editor; cleanup saves cannot change schedules or restart settings.
 - User-file cleanup runs as the desktop user. Privileged operations accept typed settings and fixed commands. Cleanup and updates share the maintenance lock.
 - The manual updater disables unattended-upgrades automatic reboot and never invokes the maintenance service or its restart hook.
 - zram settings take effect on a future ordinary boot. No live swapoff, restart, or new timer is requested.
 - Performance snapshots provide evidence for comparison; no setting is claimed to improve a workload before it is measured.
-- Root installation replaces only app binaries and assets on existing deployments. Existing schedules and restart policy are left untouched.
+- Routine interface installation replaces user binaries/assets. The narrow cleanup-policy installer additionally patches supported existing engine code, preserving schedules and restart policy.
 
 ## Verification scope
 
@@ -76,3 +76,61 @@ All native pages are rendered in separate preview instances. The optimized updat
 A separate temporary build of the current UI, using the same window close path and a non-unique application instance, exited normally after a window-manager-style close request within the 15-second bound. This exercises the path that previously minimized instead of exiting. The pre-existing user Tend process remains running with its original PID. Fourteen page layouts were rendered without invoking cleanup, updates or tuning actions. Build jobs use low CPU/I/O priority for final delivery.
 
 Final delivery: optimized user binaries match the installed copies; the original Tend PID and maintenance/restart configuration hashes remain unchanged. A standalone probe of the shared presentation source verified Today/Tomorrow, Toronto timezone conversion, the scheduled 8:00 AM time and full second precision in details. No administrator authentication was opened. Private slowdown findings remain in the local performance report, outside GitHub.
+
+## Independent cleanup policies and reliability — October 23, 2026
+
+Manual/cron policy v1 preserves legacy `age_days` as the build-cache age and as
+the fallback for previously shared image/thumbnail ages. New independent fields
+are saved only when the user saves the editor. Daily policy v1 is stored in
+`/etc/tend/cleanup-policy.json`; it has separate categories, Docker ages/allowance,
+npm log age and verification interval. Both schemas reject unknown fields,
+invalid types/ranges and unsupported versions. Invalid saved configurations fail
+closed. Folder-rule and schedule read errors remain visible instead of being
+silently replaced by empty/default configuration.
+
+The daily adapter uses one validated snapshot per maintenance invocation. Disabled
+phases report an intentional skip; update guards, boot grace, retry budget and
+health reporting retain their existing ownership. User cleanup phases execute
+through the root-owned worker as the desktop user, sharing the manual/cron lock.
+Daily npm targets only expired top-level regular `*.log` files. Config saves share
+cleanup locks. Docker commands have fixed arguments and independently tested
+retention values. Root helper errors, including APT and worker failures, propagate
+to the interface.
+
+Native editors expose save/discard/defaults and dependent controls. Preview
+completion is accepted only for the matching editor revision; another rule-file
+revision is checked again before execution. Confirmation is required when saving
+an enabled automatic policy or expanding its folder rules. Defaults are edit-only
+until saved. System policy saves have a dedicated helper action and never call
+the schedule/reboot apply action. A protected capability marker gates the new
+system interface on older installations. Privileged UI actions check existing
+authorization without interactive authentication before invoking the helper.
+
+The narrow installer defaults to dry-run, validates the supported installed engine
+layout, compiles its patch, takes the maintenance lock for system application,
+backs up files, verifies checksums and installs the capability marker last. Its
+rollback restores backed-up contents and renames newly introduced files aside.
+It never invokes systemctl, maintenance, reboot, or login integration. Root
+deployment remains an explicit administrator handoff when prompt-free authority
+is unavailable. The user interface installer remains separate.
+
+Verification uses Rust regression tests, a shared Rust/Python schema contract,
+mocked daily commands and integrated engine guards, plus native interaction and
+layout capture. The documentation feature is excluded from release builds. Its
+public GIF runs real read-only preview/filter callbacks with labeled fixture data
+and verifies input hashes. The native QA mode intentionally edits fixture policy
+files and cancels confirmations; it never activates installed cleanup or schedules.
+The legacy test that actually deletes an isolated fixture is now ignored by
+default for preview-only verification. Privileged/destructive host execution is
+not claimed as live-tested.
+
+Final validation: 26 Rust tests passed, with the isolated deletion test excluded;
+11 Python tests passed, including full staged install/repeat/rollback and unsafe
+path rejection and a real worker scheduled dry-run against isolated files. Native checks covered persistence, stale previews, independent
+policies, cancelled confirmations and malformed files; 39 layout captures were
+reviewed, with final error/status placement re-rendered. Four worker guard calls
+rejected invalid/disabled operations in an isolated home. The 38-second public
+GIF (about 0.79 MiB) passed all six input-preservation checks. User binaries were
+installed without closing the running instance. System deployment remains the
+documented administrator handoff; destructive/privileged host execution was not
+exercised. Maintenance, cron, login and restart settings were preserved.

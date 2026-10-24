@@ -1,0 +1,392 @@
+#!/usr/bin/python3
+"""Conservative daily developer workstation maintenance (Python stdlib only)."""
+import argparse
+import datetime as dt
+import errno
+import fcntl
+import json
+import os
+import pwd
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from zoneinfo import ZoneInfo
+
+USER = "fixture"
+USER_HOME = Path("/home/fixture")
+STATE_DIR = Path("/var/lib/dev-maintenance")
+TORONTO = ZoneInfo("America/Toronto")
+RETRY_SECONDS = 7200
+MAX_ATTEMPTS = 3
+BOOT_GRACE_SECONDS = 1200
+PHASES = ("updates", "apt-cache", "docker-build", "docker-images", "npm-logs", "npm-cache", "health")
+USER_PATH = "/home/fixture/.opencode/bin:/home/fixture/.local/lib/node-v22.22.2-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+
+
+def due_window(now=None):
+    """Latest 08:00 Toronto maintenance date, including DST transitions."""
+    local = (now or dt.datetime.now(dt.timezone.utc)).astimezone(TORONTO)
+    day = local.date()
+    # Tend schedule integration: the calendar and due window use one setting.
+    settings_path = Path('/etc/tend/settings.json')
+    settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    if (local.hour, local.minute) < (settings.get('hour', 8), settings.get('minute', 0)):
+        day -= dt.timedelta(days=1)
+    return day.isoformat()
+
+
+def phase_due(entry, window, now=None):
+    """Success is final for a window; failures/deferments share a bounded retry budget."""
+    now = time.time() if now is None else now
+    if entry.get("window") != window:
+        return True
+    return (not entry.get("success", False)
+            and entry.get("attempts", 0) < MAX_ATTEMPTS
+            and now - entry.get("last_attempt", 0) >= RETRY_SECONDS)
+
+
+def boot_grace_remaining(uptime=None):
+    if uptime is None:
+        uptime = float(Path("/proc/uptime").read_text().split()[0])
+    return max(0, BOOT_GRACE_SECONDS - uptime)
+
+
+def run_command(command, timeout=1800):
+    """APT callers use timeout=None to avoid interrupting an upgrade."""
+    print("Running: " + " ".join(command), flush=True)
+    try:
+        proc = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=timeout,
+                              env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8",
+                                   "HOME": pwd.getpwuid(os.geteuid()).pw_dir,
+                                   "DEBIAN_FRONTEND": "noninteractive"})
+        output = proc.stdout or ""
+        if output:
+            print(output.rstrip(), flush=True)
+        return proc.returncode, output[-8000:]
+    except subprocess.TimeoutExpired:
+        return 124, "Command exceeded its time limit"
+    except OSError as exc:
+        return 127, str(exc)
+
+
+def as_user(command):
+    return ["/usr/sbin/runuser", "-u", USER, "--", "/usr/bin/env",
+            "HOME=" + str(USER_HOME), "PATH=" + USER_PATH, *command]
+
+
+def apt_locks_busy():
+    for filename in ("/var/lib/dpkg/lock", "/var/lib/dpkg/lock-frontend",
+                     "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"):
+        try:
+            with open(filename, "r+") as lock:
+                try:
+                    fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.lockf(lock, fcntl.LOCK_UN)
+                except OSError as exc:
+                    if exc.errno in (errno.EACCES, errno.EAGAIN):
+                        return True
+                    raise
+        except FileNotFoundError:
+            continue
+    return False
+
+
+def update_guard():
+    if Path("/usr/sbin/on_ac_power").exists():
+        code, _ = run_command(["/usr/sbin/on_ac_power"], timeout=10)
+        if code == 1:
+            return "On battery power"
+        if code not in (0, 255):
+            return "Unable to determine AC power status"
+    if apt_locks_busy():
+        return "APT or dpkg is currently busy"
+    return None
+
+
+def directory_size(path):
+    """Count regular-file bytes without following symlinks into other trees."""
+    total = 0
+    for root, _, files in os.walk(path, followlinks=False):
+        for name in files:
+            try:
+                item = Path(root) / name
+                if not item.is_symlink():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def npm_busy():
+    """Avoid cache mutation during another npm operation owned by fixture."""
+    uid = pwd.getpwnam(USER).pw_uid
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            if proc.stat().st_uid != uid:
+                continue
+            comm = (proc / "comm").read_text().strip()
+            arguments = (proc / "cmdline").read_bytes().split(b"\0")
+            if comm.startswith("npm") or any(Path(os.fsdecode(arg)).name in ("npm", "npm-cli.js")
+                                             for arg in arguments if arg):
+                return True
+        except (OSError, UnicodeError):
+            continue
+    return False
+
+
+def health_report():
+    space = shutil.disk_usage("/")
+    pip_cache = directory_size(USER_HOME / ".cache/pip")
+    npm_cache = directory_size(USER_HOME / ".npm")
+    report = {"generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "root_free_bytes": space.free, "root_total_bytes": space.total,
+              "root_free_below_20GB": space.free < 20 * 1024**3,
+              "pip_cache_bytes": pip_cache, "pip_cache_above_2GB": pip_cache > 2 * 1024**3,
+              "npm_cache_bytes": npm_cache, "npm_cache_above_2GB": npm_cache > 2 * 1024**3,
+              "reboot_required": Path("/var/run/reboot-required").exists(),
+              "uncapped_container_logs": [], "docker_inspection_error": None}
+    code, output = run_command(as_user(["/usr/bin/docker", "ps", "-aq"]), timeout=30)
+    if code:
+        report["docker_inspection_error"] = "Docker daemon unavailable or access denied"
+        return report
+    ids = output.split()
+    if ids:
+        code, raw = run_command(as_user(["/usr/bin/docker", "inspect", "--format",
+            '{{json .Name}} {{json .HostConfig.LogConfig}}', *ids]), timeout=60)
+        if code:
+            report["docker_inspection_error"] = "Unable to inspect container logging configuration"
+        else:
+            for line in raw.splitlines():
+                try:
+                    decoder = json.JSONDecoder()
+                    name, pos = decoder.raw_decode(line)
+                    config = json.loads(line[pos:].strip())
+                    # json-file is unbounded unless max-size is configured; local rotates by default.
+                    if config.get("Type") in ("", "json-file") and not config.get("Config", {}).get("max-size"):
+                        report["uncapped_container_logs"].append(name.lstrip("/"))
+                except (ValueError, AttributeError):
+                    report["docker_inspection_error"] = "Some logging metadata could not be parsed"
+    return report
+
+
+def execute_phase(name, state, now=None):
+    """Return (status, short message); healthy phases do not block later phases."""
+    if name == "updates":
+        reason = update_guard()
+        if reason:
+            return "deferred", reason
+        code, _ = run_command(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=0",
+                               "update", "--error-on=any"], timeout=None)
+        if code:
+            return "deferred", "APT metadata refresh failed; offline, repository failure, or lock contention"
+        reason = update_guard()
+        if reason:
+            return "deferred", reason
+        code, _ = run_command(["/usr/bin/unattended-upgrade"], timeout=None)
+        return ("success", "Configured unattended upgrades completed") if not code else ("failed", "Unattended upgrades failed; consult journal and unattended-upgrades logs")
+    if name == "apt-cache":
+        if apt_locks_busy():
+            return "deferred", "APT or dpkg is currently busy"
+        code, _ = run_command(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=0", "autoclean"], timeout=None)
+    elif name == "docker-build":
+        code, _ = run_command(as_user(["/usr/bin/docker", "builder", "prune", "--all", "--force",
+                                        "--filter", "until=336h", "--keep-storage", "5GB"]))
+    elif name == "docker-images":
+        code, _ = run_command(as_user(["/usr/bin/docker", "image", "prune", "--force", "--filter", "until=336h"]))
+    elif name == "npm-logs":
+        if npm_busy():
+            return "deferred", "Another npm operation is active"
+        # Deletion runs under fixture, so a writable cache or symlink cannot affect root-owned files.
+        cleanup = "import os,time; from pathlib import Path; p=Path('/home/fixture/.npm/_logs'); cutoff=time.time()-30*86400; [(f.unlink()) for f in (p.glob('*.log') if not p.is_symlink() and not p.parent.is_symlink() else []) if f.is_file() and not f.is_symlink() and f.stat().st_mtime<cutoff]"
+        code, _ = run_command(as_user(["/usr/bin/python3", "-c", cleanup]), timeout=120)
+    elif name == "npm-cache":
+        now = time.time() if now is None else now
+        if now - state.get("npm_last_verified", 0) < 7 * 86400:
+            return "success", "Weekly npm verification is not yet due"
+        if npm_busy():
+            return "deferred", "Another npm operation is active"
+        code, _ = run_command(as_user(["/home/fixture/.opencode/bin/npm", "cache", "verify"]))
+        if not code:
+            state["npm_last_verified"] = now
+    else:
+        raise ValueError("Unknown phase: " + name)
+    return ("success", "Completed") if not code else ("failed", "Command failed with exit status " + str(code))
+
+
+def load_json(path, default):
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return default
+
+
+def atomic_json(path, value, mode):
+    fd, temp = tempfile.mkstemp(prefix=".maintenance-", dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(value, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def dry_run(state_dir):
+    print("READ ONLY: no cleanup, upgrades, or state changes will occur")
+    print("Due maintenance date:", due_window())
+    print("Boot grace remaining (seconds):", round(boot_grace_remaining()))
+    try:
+        report = load_json(state_dir / "latest-report.json", {})
+        print("Last report:", json.dumps(report.get("phases", {}), indent=2))
+    except (OSError, ValueError):
+        print("No readable previous report")
+    print("Updates: AC-power and APT-lock checks, apt-get update --error-on=any, unattended-upgrade")
+    print("APT: apt-get autoclean; no autoremove")
+    print("Docker: docker builder prune --all --force --filter until=336h --keep-storage 5GB")
+    print("Docker: docker image prune --force --filter until=336h (dangling images only)")
+    print("Docker eligibility below is advisory; the daemon decides unused cache eligibility at prune time.")
+    referenced = set()
+    container_command = ["/usr/bin/docker", "ps", "-aq"]
+    rc, container_ids = run_command(as_user(container_command), timeout=30) if os.geteuid() == 0 else run_command(container_command, timeout=30)
+    if not rc and container_ids.split():
+        reference_command = ["/usr/bin/docker", "inspect", "--format", "{{.Image}}", *container_ids.split()]
+        rc, refs = run_command(as_user(reference_command), timeout=60) if os.geteuid() == 0 else run_command(reference_command, timeout=60)
+        if not rc:
+            referenced = set(refs.split())
+    for command in (["/usr/bin/docker", "system", "df"],
+                    ["/usr/bin/docker", "builder", "du", "--filter", "until=336h"],
+                    ["/usr/bin/docker", "image", "ls", "--filter", "dangling=true", "--no-trunc", "--format", "{{.ID}}"]):
+        code, output = run_command(as_user(command), timeout=60) if os.geteuid() == 0 else run_command(command, timeout=60)
+        if code:
+            print("Docker read-only inspection unavailable for:", " ".join(command))
+        if command[1:3] == ["image", "ls"] and not code:
+            for image_id in set(output.split()):
+                inspect_cmd = ["/usr/bin/docker", "image", "inspect", "--format", "{{.Created}}", image_id]
+                rc, created = run_command(as_user(inspect_cmd), timeout=30) if os.geteuid() == 0 else run_command(inspect_cmd, timeout=30)
+                if not rc:
+                    try:
+                        stamp = dt.datetime.fromisoformat(created.strip().replace("Z", "+00:00"))
+                        eligible = (dt.datetime.now(dt.timezone.utc) - stamp).total_seconds() > 336 * 3600
+                        print("Dangling image", image_id, "created", created.strip(), "older than 14 days:", eligible,
+                              "referenced by a container (including stopped):", image_id in referenced)
+                    except ValueError:
+                        print("Cannot parse creation date for", image_id)
+    print("npm: remove regular diagnostic logs older than 30 days; cache verify at most weekly")
+    print("pip: report cache above 2 GB; no dependency or environment removal")
+    print("No container, network, volume, or tagged-image removal commands are scheduled")
+    return 0
+
+
+def status(state_dir):
+    try:
+        report = load_json(state_dir / "latest-report.json", None)
+        if report is None:
+            print("Maintenance has not yet produced a report.")
+            return 0
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+    except (OSError, ValueError) as exc:
+        print("Cannot read maintenance status:", exc, file=sys.stderr)
+        return 1
+
+
+def run(state_dir):
+    if os.geteuid() != 0:
+        print("--run requires administrator privileges", file=sys.stderr)
+        return 1
+    grace = boot_grace_remaining()
+    if grace:
+        # Wait with no work; OnBootSec=20min is not a second trigger when this unit is active.
+        print("Waiting for boot grace:", round(grace), "seconds", flush=True)
+        while grace > 0:
+            time.sleep(min(grace, 60))
+            grace = boot_grace_remaining()
+    state_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if state_dir.is_symlink() or state_dir.stat().st_uid != 0:
+        raise RuntimeError("Maintenance state directory must be root-owned and not a symlink")
+    os.chmod(state_dir, 0o755)
+    fd = os.open(state_dir / "run.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as lock:
+        if os.fstat(lock.fileno()).st_uid != 0:
+            raise RuntimeError("Maintenance lock must be root-owned")
+        os.fchmod(lock.fileno(), 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Maintenance is already running; skipping duplicate invocation")
+            return 0
+        state = load_json(state_dir / "state.json", {"phases": {}})
+        window = due_window()
+        before = shutil.disk_usage("/").free
+        for name in PHASES:
+            now = time.time()
+            entry = state.setdefault("phases", {}).get(name, {})
+            if not phase_due(entry, window, now):
+                print(name + ": skipped (completed, waiting for retry, or retry limit reached)", flush=True)
+                continue
+            if entry.get("window") != window:
+                entry = {"window": window, "attempts": 0,
+                         "last_success": entry.get("last_success"),
+                         "last_success_window": entry.get("last_success_window")}
+            entry.update(attempts=entry.get("attempts", 0) + 1, last_attempt=now,
+                         success=False, status="running", message="Phase started")
+            state["phases"][name] = entry
+            atomic_json(state_dir / "state.json", state, 0o600)
+            try:
+                if name == "health":
+                    state["health"] = health_report()
+                    phase_status, message = "success", "Health observations recorded"
+                else:
+                    phase_status, message = execute_phase(name, state, now)
+            except Exception as exc:
+                phase_status, message = "failed", type(exc).__name__ + ": " + str(exc)
+            entry.update(status=phase_status, success=phase_status == "success", message=message)
+            if entry["success"]:
+                entry["last_success"] = time.time()
+                entry["last_success_window"] = window
+            atomic_json(state_dir / "state.json", state, 0o600)
+            print(name + ": " + phase_status + " — " + message, flush=True)
+        report = dict(state.get("health", {}))
+        report.update(window=window, generated_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                      root_free_bytes=shutil.disk_usage("/").free,
+                      approximate_net_free_space_change_bytes=shutil.disk_usage("/").free - before,
+                      free_space_change_note="Net filesystem change during this run; other processes may contribute",
+                      phases=state["phases"])
+        report["root_free_below_20GB"] = report["root_free_bytes"] < 20 * 1024**3
+        report["reboot_required"] = Path("/var/run/reboot-required").exists()
+        atomic_json(state_dir / "latest-report.json", report, 0o644)
+        incomplete = [name for name in PHASES if not state["phases"].get(name, {}).get("success")]
+        if incomplete:
+            print("Incomplete phases:", ", ".join(incomplete), flush=True)
+        return 1 if incomplete else 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--run", action="store_true")
+    group.add_argument("--dry-run", action="store_true")
+    group.add_argument("--status", action="store_true")
+    parser.add_argument("--state-dir", type=Path, default=STATE_DIR)
+    args = parser.parse_args(argv)
+    try:
+        if args.status:
+            return status(args.state_dir)
+        if args.dry_run:
+            return dry_run(args.state_dir)
+        return run(args.state_dir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print("Maintenance error:", exc, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

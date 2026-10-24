@@ -12,7 +12,8 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 | --- | --- |
 | **Overview** | Free disk space, CPU/memory/swap snapshot, maintenance status and recent results. |
 | **Storage** | Cancellable folder scans; allocated size, largest files, and development directories; open locations in Files. |
-| **Disk cleanup** | Category selection, preview, cache allowances, editable folder rules with filename patterns and minimum ages, execution results and free-space change. |
+| **Disk cleanup** | Manual/cron category switches, independent retention ages, cache allowances, save/discard/defaults, preview, folder rules and results. |
+| **Daily cleanup** | Separate daily-maintenance categories, Docker ages/allowance, npm log retention and verification frequency. Requires the updated system integration. |
 | **Cleanup scheduling** | Daily, weekly or numeric five-field user cron schedules; optional missed-run catch-up, saved policy and last result. Disabled until enabled and saved. |
 | **System logs** | System/user journals and recent crashed apps; time, severity and text filters; selected-event details and local export. |
 | **Task Manager** | Windows 11–inspired Processes and Performance views: live searchable/sortable process table; CPU, memory, per-disk and per-adapter graphs; available GPU counters; process controls, update speed and snapshot export. |
@@ -64,7 +65,7 @@ Preview and confirmation are required in the UI. **Clean selected** never invoke
 | APT | Remove obsolete downloaded packages with `apt-get autoclean`. No autoremove. |
 | Docker build cache | Prune unused cache older than the selected age, with a selected storage allowance. Defaults: 14 days / 5 GB. |
 | Docker images | Remove dangling images older than the selected age. |
-| npm diagnostic logs | Remove regular files older than 30 days from `~/.npm/_logs`. |
+| npm diagnostic logs | Remove regular files older than the selected age from `~/.npm/_logs` (default 30 days). |
 | Pip cache | Optional purge of downloaded packages and wheels in `~/.cache/pip`. |
 | Thumbnails | Optional removal of old regular files in `~/.cache/thumbnails`. |
 | Trash | Optional permanent emptying of desktop Trash, including mounted-volume trash supported by GIO. |
@@ -73,7 +74,11 @@ Containers, volumes, networks, tagged images, repositories, virtual environments
 
 Docker’s inventory is not an exact deletion estimate: the daemon decides unused eligibility at execution. The final root free-space difference includes concurrent writes and may be negative. User caches on another mount do not contribute to the root filesystem’s delta.
 
-Manual cleanup preferences are saved independently from the **existing daily maintenance policy** shown under Appearance. Ubuntu’s existing temporary-file cleanup, journal limits, log rotation, Snap maintenance and SSD trimming remain in place.
+**Disk cleanup → Manual & cron** and **Daily cleanup** have independent policies. Use **Save**, **Discard changes** or **Restore defaults**; defaults only change the editor until saved. Docker build cache and dangling images have separate ages (7–3650 days); npm logs and thumbnails use 1–3650 days, and Docker's allowance is 1–100 GB. Pip and Trash are whole-cache/whole-Trash actions without an age filter.
+
+Daily cleanup controls APT obsolete downloads, Docker build cache and dangling images, npm log age, and npm verification every 1–30 days. Defaults preserve 14-day Docker retention, a 5 GB allowance, 30-day npm logs and weekly verification. Daily npm cleanup retains top-level `*.log` files as its target. Daily runs do not consume manual custom-folder rules. Ubuntu’s existing temporary-file cleanup, journal limits, log rotation, Snap maintenance and SSD trimming remain in place.
+
+Saving an enabled automatic policy requires confirmation. Changing selections, retention or rules invalidates the manual preview, even while collection is in progress. Malformed saved policies and rules show errors and prevent unattended deletion; they do not silently enable defaults. Existing legacy shared ages migrate without changing eligibility. Saving cleanup settings never changes maintenance timing, warnings, package-update policy or restart settings.
 
 Implementation follows the separate [Docker build-cache pruning](https://docs.docker.com/reference/cli/docker/builder/prune/) and [image pruning](https://docs.docker.com/reference/cli/docker/image/prune/) controls. User-file cleanup runs as the desktop user, with directory-descriptor checks to avoid following replacement symlinks.
 
@@ -128,7 +133,7 @@ Tend currently integrates with an existing `dev-maintenance` deployment on Ubunt
 
 - `/usr/local/lib/dev-maintenance/dev-maintenance.py` and its systemd service/timer;
 - the existing session-restoration helper for restoration reports;
-- Polkit and a GNOME session for native administrator prompts and desktop preferences.
+- Polkit, existing scoped Tend authorization and a GNOME session for system operations and desktop preferences. Missing authorization is reported without opening a password dialog.
 
 Requires Rust, GTK 4.12+ and libadwaita 1.5+ development packages:
 
@@ -144,6 +149,23 @@ The build uses one job at a time. Regular installation and updates replace the i
 The trusted system helper must already be installed. If it is missing, the installer stops with an explanation instead of opening an authentication prompt. A first-time administrator setup for the existing maintenance deployment can be performed explicitly with `pkexec /usr/bin/python3 "$PWD/scripts/install.py"`; this is separate from routine interface updates. Helper changes also require an explicit administrator-managed upgrade, and are never automatically attempted by the user installer.
 
 Choose Quit Tend, then reopen Tend to use an interface update. Open it from the dock or application launcher.
+
+## Daily policy integration
+
+![Separate daily cleanup editor](../assets/daily-cleanup.png)
+
+Routine interface updates leave the trusted system helper in place. To enable daily policy saves, build the matching helper/worker and review the narrow installer:
+
+```sh
+cargo build --release --locked -j 1 --bins
+python3 scripts/install-policy.py --dry-run
+```
+
+An administrator can then run `sudo python3 scripts/install-policy.py --apply`. This is a separate, explicit deployment step; the app and user installer never launch it. It patches the **installed** engine while preserving its current scheduling integration, installs the fixed policy adapter and matching helper/worker, then writes the capability marker last. It takes the existing maintenance lock and refuses unsupported engine layouts or unprotected paths. It does not start maintenance, reload timers, change schedules or touch restart/login hooks.
+
+The installer records adjacent backups and prints a manifest. To restore that installation, run `sudo python3 scripts/install-policy.py --rollback /etc/tend/policy-install.<printed-timestamp>.json --apply`. Newly introduced integration files are renamed aside rather than deleted. Review rollback with the same command without `--apply` first. This rollback affects integration binaries/source only; saved policy values are retained.
+
+Until deployment completes, daily controls remain reviewable and previewable, with saving visibly unavailable. Manual APT cleanup also requires the matching helper. Other manual categories and user cron use the user worker. No password is saved, and unavailable authorization produces an actionable error.
 
 ## Remember Tend authorization
 
@@ -162,6 +184,7 @@ Remove `/etc/polkit-1/rules.d/49-tend-local-user.rules` as administrator to rest
 | Location | Contents |
 | --- | --- |
 | `/etc/tend/settings.json` | Existing maintenance schedule settings. |
+| `/etc/tend/cleanup-policy.json` | Validated daily cleanup policy; independent of scheduling. |
 | `~/.config/tend/` | App appearance and manual-cleanup preferences. |
 | `~/.local/state/tend/` | Local reports and user-setting recovery history. |
 | `~/Documents/Tend reports/` | Explicitly exported text/JSON reports. |
@@ -187,6 +210,8 @@ cargo build --release --locked -j 1
 | `src/workbench.rs` | Storage, tuning and recovery pages. |
 | `src/task_manager.rs` | Native Task Manager tables, controls and resource graphs. |
 | `src/task_stats.rs` | Read-only process, disk, network and GPU counters. |
+| `src/daily_policy.rs` / `src/cleanup_policy_ui.rs` | Separate daily/manual policy models and native editors. |
+| `assets/tend_cleanup_policy.py` / `scripts/install-policy.py` | Daily engine adapter and narrow deployment/rollback. |
 | `src/cleanup_rules.rs` / `src/cleanup_ui.rs` | Folder rules, user cron scheduling and cleanup controls. |
 | `src/system_logs.rs` / `src/log_reader.rs` | Bounded journal/crash collection and native log filters. |
 | `src/workstation.rs` | Scans, reports, cache operations and process counters. |

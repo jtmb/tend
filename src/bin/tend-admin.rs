@@ -118,6 +118,7 @@ fn execute() -> Result<(), String> {
     if let Some(action) = args.first().map(String::as_str) {
         if [
             "cleanup",
+            "daily-policy",
             "updates",
             "memory",
             "memory-restore",
@@ -236,7 +237,7 @@ fn execute() -> Result<(), String> {
             Ok(())
         }
         Some("authorization-check") => { println!("Tend helper authorization verified; no settings changed."); Ok(()) },
-        _ => Err("Supported operations: apply, cleanup, updates, memory, memory-restore, install-zram, docker-logs, authorization-check, notify.".into()),
+        _ => Err("Supported operations: apply, cleanup, daily-policy, updates, memory, memory-restore, install-zram, docker-logs, authorization-check, notify.".into()),
     }
 }
 
@@ -298,6 +299,22 @@ fn workstation_action(action: &str) -> Result<(), String> {
         libc::setpriority(libc::PRIO_PROCESS, 0, 10);
     }
     match action {
+        "daily-policy" => {
+            let policy: tend::daily_policy::Policy = input_json()?;
+            policy.validate()?;
+            if !tend::daily_policy::Policy::ready() {
+                return Err("Daily policy integration is not installed.".into());
+            }
+            if let Ok(previous) = fs::read_to_string(tend::daily_policy::CONFIG) {
+                write_mode("/etc/tend/cleanup-policy.previous.json", &previous, 0o644)?;
+            }
+            write_mode(
+                tend::daily_policy::CONFIG,
+                &serde_json::to_string_pretty(&policy).map_err(|e| e.to_string())?,
+                0o644,
+            )?;
+            println!("Daily cleanup policy saved. Applies at the next existing maintenance run.");
+        }
         "docker-logs" => {
             let (user, home) = caller()?;
             let docker = |args: &[&str]| -> Result<String, String> {
@@ -380,10 +397,13 @@ fn workstation_action(action: &str) -> Result<(), String> {
             let mut report = String::new();
             if c.apt {
                 report.push_str("APT obsolete downloads:\n");
-                report.push_str(&tend::workstation::command(
-                    "/usr/bin/apt-get",
-                    &["-o", "DPkg::Lock::Timeout=0", "autoclean"],
-                ));
+                report.push_str(
+                    &output(
+                        "/usr/bin/apt-get",
+                        &["-o", "DPkg::Lock::Timeout=0", "autoclean"],
+                    )
+                    .map_err(|e| format!("APT cleanup failed: {e}"))?,
+                );
                 report.push('\n');
             }
             let json = serde_json::to_string(&c).unwrap();
@@ -421,6 +441,9 @@ fn workstation_action(action: &str) -> Result<(), String> {
                 ));
             }
             report.push_str(&format!("\nTotal root free-space change including APT: {:.1} MiB (concurrent writes included)",(tend::workstation::available() as i128-before as i128) as f64/1048576.));
+            if !r.status.success() {
+                return Err(report);
+            }
             println!("{report}");
         }
         "updates" => {

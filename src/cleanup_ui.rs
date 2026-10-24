@@ -5,7 +5,14 @@ use tend::{cleanup_rules as rules, workstation as w};
 pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box {
     let p = column(10);
     let group=adw::PreferencesGroup::builder().title("Additional cleanup rules").description("Saved rules are included in cleanup previews, manual cleanup and user cron jobs. Files are permanently removed only after their minimum age.").build();
-    let policy = Rc::new(RefCell::new(rules::Policy::load().unwrap_or_default()));
+    let loaded = match rules::Policy::load() {
+        Ok(p) => p,
+        Err(e) => {
+            p.append(&label(&format!("Cannot load folder rules: {e}. Repair the saved file before editing or cleaning."), "error"));
+            return p;
+        }
+    };
+    let policy = Rc::new(RefCell::new(loaded));
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk::SelectionMode::Single);
@@ -171,6 +178,7 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
                 rebuild.clone(),
                 status.clone(),
             );
+            let parent = win.clone();
             d.connect_response(None, move |_, r| {
                 if r != "save" {
                     return;
@@ -191,14 +199,15 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
                 } else {
                     next.rules.push(rule);
                 }
-                match next.save() {
-                    Ok(()) => {
-                        *policy.borrow_mut() = next;
-                        rebuild();
-                        changed();
-                        status.set_text("Rule saved. Preview cleanup to inspect eligible files.");
-                    }
-                    Err(e) => status.set_text(&format!("Rule not saved: {e}")),
+                let (policy,rebuild,changed,status)=(policy.clone(),rebuild.clone(),changed.clone(),status.clone());
+                let error_status=status.clone();
+                let save=move||match next.save() {
+                    Ok(()) => { *policy.borrow_mut()=next.clone();rebuild();changed();status.set_text("Rule saved. Preview cleanup to inspect eligible files."); },
+                    Err(e)=>status.set_text(&format!("Rule not saved: {e}")),
+                };
+                match rules::Schedule::load() {
+                    Ok(s)if s.enabled=>crate::workbench::confirm(&parent,"Change an automatic cleanup rule?","Enabled user cron jobs will use this rule at their next run. Review the folder, patterns and minimum age.","Save rule",false,save),
+                    Ok(_)=>save(),Err(e)=>error_status.set_text(&format!("Cannot confirm schedule state: {e}")),
                 }
             });
             d.present();
@@ -236,7 +245,23 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
 }
 pub fn schedule_page(stack: &gtk::Stack) {
     let p=page("Cleanup scheduling","User cron jobs run saved Docker/cache selections and additional cleanup rules. APT stays with the existing system maintenance job. These jobs never install updates or request restarts.");
-    let loaded = rules::Schedule::load().unwrap_or_default();
+    let loaded = match rules::Schedule::load() {
+        Ok(s) => s,
+        Err(e) => {
+            p.append(&label(
+                &format!(
+                    "Cannot load the saved schedule: {e}. Repair it before changing cron jobs."
+                ),
+                "error",
+            ));
+            stack.add_titled(
+                &scroll(&p),
+                Some("cleanup-scheduling"),
+                "Cleanup scheduling",
+            );
+            return;
+        }
+    };
     let g = adw::PreferencesGroup::builder()
         .title("Cron schedule")
         .build();
@@ -362,7 +387,7 @@ pub fn schedule_page(stack: &gtk::Stack) {
                     },
                     format!(
                         "{}\n{}",
-                        w::cleanup_preview(&w::Cleanup::load())?,
+                        rules::scheduled_preview()?,
                         rules::preview(&rules::Policy::load()?)?
                     )
                 ))

@@ -281,3 +281,257 @@ pub fn record(
         glib::ControlFlow::Continue
     });
 }
+
+/// Isolated native interaction checks and a complete page contact sheet.
+/// Never activates cleanup, system saves, schedules, updates or process actions.
+pub fn qa(
+    app: &adw::Application,
+    win: &adw::ApplicationWindow,
+    outer: &gtk::Box,
+    stack: &gtk::Stack,
+    directory: &str,
+) {
+    assert!(std::env::var_os("TEND_DEMO_DIR").is_some());
+    let directory = Path::new(directory).to_owned();
+    fs::create_dir_all(&directory).unwrap();
+    let (app, win, outer, stack) = (app.clone(), win.clone(), outer.clone(), stack.clone());
+    stack.set_transition_type(gtk::StackTransitionType::None);
+    let root = page(&stack, "cleanup");
+    let spins = descendants(&root)
+        .iter()
+        .filter_map(|w| w.downcast_ref::<gtk::SpinButton>().cloned())
+        .collect::<Vec<_>>();
+    assert_eq!(spins.len(), 5);
+    let original = fs::read(tend::workstation::home().join(".config/tend/cleanup.json")).unwrap();
+    let paint = gtk::WidgetPaintable::new(Some(&outer));
+    let pages = [
+        "overview",
+        "cleanup",
+        "daily-cleanup",
+        "cleanup-scheduling",
+        "storage",
+        "task-manager",
+        "system-logs",
+        "startup",
+        "tuning",
+        "development",
+        "reports",
+        "recovery",
+        "care",
+        "schedule",
+        "activity",
+    ];
+    let mut tick = 0usize;
+    let mut evidence = vec![];
+    glib::timeout_add_local(Duration::from_millis(250), move || {
+        tick += 1;
+        match tick {
+            1 => {
+                stack.set_visible_child_name("cleanup");
+                spins[3].set_value(45.);
+                assert!(text(&root).contains("Unsaved changes"));
+            }
+            2 => {
+                button(&root, "Restore defaults").emit_clicked();
+                assert_eq!(
+                    fs::read(tend::workstation::home().join(".config/tend/cleanup.json")).unwrap(),
+                    original
+                );
+                button(&root, "Discard changes").emit_clicked();
+                assert_eq!(spins[3].value_as_int(), 30);
+                evidence.push(json!({"defaults_do_not_save":true,"discard_restores":true}));
+            }
+            3 => {
+                spins[3].set_value(45.);
+                button(&root, "Save policy").emit_clicked();
+                assert_eq!(tend::workstation::Cleanup::load().unwrap().npm_log_days, 45);
+                evidence.push(json!({"save_reload":45}));
+            }
+            4 => {
+                button(&root, "Preview cleanup").emit_clicked();
+                spins[0].set_value(31.);
+            }
+            8 => {
+                assert!(
+                    text(&root).contains("Settings changed while the preview was running"),
+                    "stale preview check failed: {}",
+                    text(&root)
+                );
+                assert!(!button(&root, "Clean selected…").is_sensitive());
+                evidence.push(json!({"stale_preview_rejected":true}));
+                button(&root, "Preview cleanup").emit_clicked();
+            }
+            12 => {
+                assert!(
+                    button(&root, "Clean selected…").is_sensitive(),
+                    "Fresh preview did not enable cleanup: {}",
+                    text(&root)
+                );
+                spins[0].set_value(32.);
+                assert!(!button(&root, "Clean selected…").is_sensitive());
+                button(&root, "Discard changes").emit_clicked();
+                evidence.push(json!({"fresh_preview_then_edit_invalidates":true}));
+            }
+            13 => {
+                let daily = page(&stack, "daily-cleanup");
+                let fields = descendants(&daily)
+                    .iter()
+                    .filter_map(|w| w.downcast_ref::<gtk::SpinButton>().cloned())
+                    .collect::<Vec<_>>();
+                fields[2].set_value(12.);
+                button(&daily, "Preview daily policy").emit_clicked();
+                assert!(text(&daily).contains("12GB"));
+                assert_eq!(tend::workstation::Cleanup::load().unwrap().keep_gb, 5);
+                evidence.push(json!({"independent_policies":true}));
+                button(&daily, "Discard changes").emit_clicked();
+            }
+            _ => {}
+        }
+        if tick >= 16 {
+            let frame = tick - 16;
+            let index = frame / 4;
+            if index < pages.len() * 2 {
+                let id = pages[index % pages.len()];
+                if frame % 4 == 0 {
+                    assert!(stack.child_by_name(id).is_some(), "QA page missing: {id}");
+                    stack.set_visible_child_name(id);
+                    adw::StyleManager::default().set_color_scheme(if index < pages.len() {
+                        adw::ColorScheme::ForceDark
+                    } else {
+                        adw::ColorScheme::ForceLight
+                    });
+                    win.set_default_size(if index < pages.len() { 1100 } else { 820 }, 760);
+                }
+                if frame % 4 == 3 {
+                    let snapshot = gtk::Snapshot::new();
+                    paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
+                    let texture = win
+                        .renderer()
+                        .unwrap()
+                        .render_texture(&snapshot.to_node().unwrap(), None);
+                    texture
+                        .save_to_png(directory.join(format!("{:02}-{id}.png", index)))
+                        .unwrap();
+                }
+            } else if index < pages.len() * 2 + 4 {
+                let i = index - pages.len() * 2;
+                let id = if i < 2 { "cleanup" } else { "daily-cleanup" };
+                if frame % 4 == 0 {
+                    stack.set_visible_child_name(id);
+                    bottom(&stack, id);
+                    adw::StyleManager::default().set_color_scheme(if i % 2 == 0 {
+                        adw::ColorScheme::ForceDark
+                    } else {
+                        adw::ColorScheme::ForceLight
+                    });
+                }
+                if frame % 4 == 3 {
+                    let snapshot = gtk::Snapshot::new();
+                    paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
+                    win.renderer()
+                        .unwrap()
+                        .render_texture(&snapshot.to_node().unwrap(), None)
+                        .save_to_png(directory.join(format!("bottom-{i}-{id}.png")))
+                        .unwrap();
+                }
+            } else if index < pages.len() * 2 + 9 {
+                let scenario = index - pages.len() * 2 - 4;
+                if frame % 4 == 0 {
+                    match scenario {
+                        0 => {
+                            let config = tend::workstation::home()
+                                .join(".config/tend/cleanup-schedule.json");
+                            fs::write(
+                                config,
+                                r#"{"enabled":true,"expression":"0 10 * * *","catch_up":true}"#,
+                            )
+                            .unwrap();
+                            stack.set_visible_child_name("cleanup");
+                            button(&root, "Save policy").emit_clicked();
+                        }
+                        1 => {
+                            button(&root, "Add rule…").emit_clicked();
+                        }
+                        2 => {
+                            fs::write(
+                                tend::workstation::home().join(".config/tend/cleanup.json"),
+                                "{",
+                            )
+                            .unwrap();
+                            stack.remove(&page(&stack, "cleanup"));
+                            crate::cleanup_policy_ui::manual(&stack, &win);
+                            stack.set_visible_child_name("cleanup");
+                        }
+                        3 => {
+                            fs::write(
+                                tend::workstation::home().join(".config/tend/rules.json"),
+                                "{",
+                            )
+                            .unwrap();
+                            stack.remove(&page(&stack, "cleanup"));
+                            crate::cleanup_policy_ui::manual(&stack, &win);
+                            stack.set_visible_child_name("cleanup");
+                            bottom(&stack, "cleanup");
+                        }
+                        4 => {
+                            fs::write(
+                                tend::workstation::home()
+                                    .join(".config/tend/cleanup-schedule.json"),
+                                "{",
+                            )
+                            .unwrap();
+                            stack.remove(&page(&stack, "cleanup-scheduling"));
+                            crate::cleanup_ui::schedule_page(&stack);
+                            stack.set_visible_child_name("cleanup-scheduling");
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                if frame % 4 == 3 {
+                    if scenario < 2 {
+                        let dialog = gtk::Window::list_toplevels()
+                            .into_iter()
+                            .filter_map(|w| w.downcast::<adw::MessageDialog>().ok())
+                            .find(|w| w.is_visible())
+                            .expect("Expected native confirmation or rule editor");
+                        let view = gtk::WidgetPaintable::new(Some(&dialog));
+                        let snapshot = gtk::Snapshot::new();
+                        view.snapshot(&snapshot, dialog.width() as f64, dialog.height() as f64);
+                        dialog
+                            .renderer()
+                            .unwrap()
+                            .render_texture(&snapshot.to_node().unwrap(), None)
+                            .save_to_png(directory.join(format!("dialog-{scenario}.png")))
+                            .unwrap();
+                        dialog.response("cancel");
+                        evidence.push(json!({"dialog_review":scenario,"cancelled":true}));
+                    } else {
+                        let snapshot = gtk::Snapshot::new();
+                        paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
+                        win.renderer()
+                            .unwrap()
+                            .render_texture(&snapshot.to_node().unwrap(), None)
+                            .save_to_png(directory.join(format!("error-{scenario}.png")))
+                            .unwrap();
+                        let id = if scenario == 4 {
+                            "cleanup-scheduling"
+                        } else {
+                            "cleanup"
+                        };
+                        assert!(text(&page(&stack, id)).contains("Cannot load"));
+                        evidence.push(json!({"invalid_file_visible":scenario}));
+                    }
+                }
+            } else {
+                fs::write(
+                    directory.join("evidence.json"),
+                    serde_json::to_vec_pretty(&evidence).unwrap(),
+                )
+                .unwrap();
+                app.activate_action("quit", None);
+                return glib::ControlFlow::Break;
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+}

@@ -102,6 +102,7 @@ impl Policy {
         }
     }
     pub fn save(&self) -> Result<(), String> {
+        let _lock = cleanup_lock()?;
         if self.rules.len() > 64 {
             return Err("At most 64 rules are supported.".into());
         }
@@ -449,6 +450,14 @@ pub fn run_custom(p: &Policy) -> Result<String, String> {
     let _lock = cleanup_lock()?;
     apply(p)
 }
+pub fn scheduled_preview() -> Result<String, String> {
+    let mut c = w::Cleanup::load()?;
+    c.apt = false;
+    Ok(format!(
+        "{}\nAPT runs only in daily system maintenance.",
+        w::cleanup_preview(&c)?
+    ))
+}
 pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     let s = Schedule::load()?;
     if !s.enabled {
@@ -476,7 +485,8 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     }
     if !apply_changes {
         return Ok(format!(
-            "Dry run: latest due timestamp {due}\n{}",
+            "Dry run: latest due timestamp {due}\n{}\n{}",
+            scheduled_preview()?,
             preview(&Policy::load()?)?
         ));
     }
@@ -496,7 +506,7 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
         return Ok("Deferred until the 20-minute boot grace period ends.".into());
     }
     let policy = Policy::load()?;
-    let mut c = w::Cleanup::load();
+    let mut c = w::Cleanup::load()?;
     let apt = c.apt;
     c.apt = false;
     let mut report = String::from("Scheduled user cleanup\n");

@@ -93,3 +93,26 @@ pub fn source_date(raw: &str) -> String {
         if hour < 12 { "AM" } else { "PM" }
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn scheduled_eight_am_uses_toronto_dst_and_readable_clock() {
+        for (iso, suffix) in [
+            ("2026-01-15T13:00:00Z", "8:00:00 AM EST"),
+            ("2026-07-15T12:00:00Z", "8:00:00 AM EDT"),
+        ] {
+            let timestamp = DateTime::from_iso8601(iso, None).unwrap().to_unix();
+            assert!(exact(timestamp).ends_with(suffix));
+            assert!(when(timestamp).ends_with("8:00 AM"));
+        }
+    }
+    #[test]
+    fn invalid_systemd_timestamps_do_not_display_bad_dates() {
+        for raw in ["n/a", "@NaN", "@inf", "@-1", ""] {
+            assert_eq!(systemd(raw), None);
+        }
+        assert_eq!(date("bad"), "No report yet");
+    }
+}

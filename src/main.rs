@@ -1,3 +1,4 @@
+mod cleanup_policy_ui;
 mod cleanup_ui;
 #[cfg(feature = "docs-demo")]
 mod docs_demo;
@@ -63,10 +64,11 @@ fn toggle(group: &adw::PreferencesGroup, title: &str, subtitle: &str, value: boo
     row(group, title, subtitle, &w);
     w
 }
-fn job<F, C>(work: F, done: C)
+fn job<T, F, C>(work: F, done: C)
 where
-    F: FnOnce() -> Result<String, String> + Send + 'static,
-    C: FnOnce(Result<String, String>) + 'static,
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    C: FnOnce(Result<T, String>) + 'static,
 {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -90,6 +92,12 @@ fn privileged(action: &str, data: Option<String>) -> Result<String, String> {
     if std::env::var_os("TEND_DEMO_DIR").is_some() {
         return Err("Privileged actions are disabled in documentation recordings.".into());
     }
+    // Never ask a desktop agent to authenticate. The installed rule grants this
+    // helper only; installation or missing authorization is a separate handoff.
+    output("/usr/bin/pkcheck", &["--action-id", "io.github.jtmb.Tend.manage",
+        "--process", &std::process::id().to_string(), "--detail", "program",
+        "/usr/local/libexec/tend-admin"])
+        .map_err(|_| "Tend administrator authorization is unavailable. No password prompt was opened. Complete the documented helper setup to enable this action.".to_string())?;
     let mut child = Command::new("/usr/bin/pkexec")
         .args(["/usr/local/libexec/tend-admin", action])
         .stdin(Stdio::piped())
@@ -475,12 +483,27 @@ fn build(app: &adw::Application) {
     stack.add_titled(&scroll(&schedule), Some("schedule"), "Schedule");
     let care = page(
         "Appearance & daily policy",
-        "Display preferences and the existing daily maintenance policy.",
+        "Display preferences and cleanup policy shortcuts.",
     );
     let cg = adw::PreferencesGroup::builder()
-        .title("Cleanup policy")
+        .title("Daily cleanup policy")
         .build();
-    for (t,s) in [("Docker","Unused build cache older than 14 days; a 5 GB cache allowance. Only dangling images are pruned."),("Projects and volumes","Containers, tagged images, volumes, project dependencies, and virtual environments are preserved."),("npm and Python","npm cache verification runs weekly. Python caches over 2 GB are reported for review."),("Ubuntu","Stable repository updates, obsolete APT downloads, existing temporary-file cleanup and log rotation."),("Missed runs","Persistent systemd timers catch up after startup, with a 20-minute boot grace period.")]{let r=adw::ActionRow::builder().use_markup(false).title(t).subtitle(s).build();cg.add(&r);}
+    let edit = gtk::Button::with_label("Configure daily cleanup");
+    row(
+        &cg,
+        "Cleanup categories and retention",
+        &tend::daily_policy::Policy::read()
+            .map(|p| {
+                format!(
+                    "Docker: {} / {} days · {} GB allowance · npm logs: {} days",
+                    p.build_days, p.image_days, p.keep_gb, p.npm_log_days
+                )
+            })
+            .unwrap_or_else(|_| "Daily policy needs attention · open the editor to review".into()),
+        &edit,
+    );
+    let pages = stack.clone();
+    edit.connect_clicked(move |_| pages.set_visible_child_name("daily-cleanup"));
     care.append(&cg);
     let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
     let theme = gtk::DropDown::from_strings(&["Follow system", "Light", "Dark"]);
@@ -615,6 +638,7 @@ fn build(app: &adw::Application) {
             "Preferences",
             vec![
                 ("schedule", "Maintenance", "alarm-symbolic"),
+                ("daily-cleanup", "Daily cleanup", "edit-clear-all-symbolic"),
                 (
                     "cleanup-scheduling",
                     "Cleanup schedule",
@@ -653,7 +677,15 @@ fn build(app: &adw::Application) {
     win.present();
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
     #[cfg(feature = "docs-demo")]
-    if let Ok(directory) = std::env::var("TEND_DEMO_DIR") {
+    if let Ok(directory) = std::env::var("TEND_QA_DIR") {
+        docs_demo::qa(app, &win, &outer, &stack, &directory);
+        return;
+    }
+    #[cfg(feature = "docs-demo")]
+    if let (Ok(directory), None) = (
+        std::env::var("TEND_DEMO_DIR"),
+        std::env::var_os("TEND_SCREENSHOT"),
+    ) {
         docs_demo::record(app, &win, &outer, &stack, &directory);
         return;
     }

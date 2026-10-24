@@ -12,9 +12,9 @@
 
 | Storage & cleanup | Task Manager | Logs & crashes |
 | :--- | :--- | :--- |
-| Find large files and development directories. Preview caches and Docker storage before cleanup. Add folder rules with patterns and age limits. | Search and sort processes. Follow CPU, memory, disk and network graphs. Inspect a process and export a snapshot. | Load recent events and crash reports. Narrow by time, severity or text. Select an event for details and export filtered results. |
+| Find large files and development directories. Set separate daily and manual/cron policies with per-category ages and cache limits. Preview eligible files and add custom folder rules. | Search and sort processes. Follow CPU, memory, disk and network graphs. Inspect a process and export a snapshot. | Load recent events and crash reports. Narrow by time, severity or text. Select an event for details and export filtered results. |
 
-<p><a href="assets/task-manager.png"><img src="assets/task-manager.png" width="49%" alt="Tend Task Manager with CPU history and resource selection"></a> <a href="assets/cleanup.png"><img src="assets/cleanup.png" width="49%" alt="Tend cleanup categories, minimum age and cache allowance"></a></p>
+<p><a href="assets/task-manager.png"><img src="assets/task-manager.png" width="49%" alt="Tend Task Manager with CPU history and resource selection"></a> <a href="assets/cleanup.png"><img src="assets/cleanup.png" width="49%" alt="Tend manual and cron cleanup categories with independent retention controls"></a></p>
 
 <details>
 <summary>More screenshots — system logs and performance settings</summary>
@@ -26,6 +26,7 @@
 
 - **Developer maintenance** — Docker cache and log reporting, npm cache verification and Python cache review.
 - **Desktop & memory controls** — login applications, animations, Wayland launcher overrides, swappiness and future-boot zram settings. Supported changes can be restored through Recovery.
+- **Independent cleanup policies** — separate daily-maintenance and manual/cron settings, with explicit save/discard, preview invalidation and visible policy errors.
 - **Cleanup schedules** — daily, weekly or custom cron schedules, missed-run catch-up and saved results. New schedules start disabled.
 
 ### Small by design
@@ -46,6 +47,8 @@ git clone https://github.com/jtmb/tend.git
 cd tend
 ./scripts/install.sh
 ```
+
+Daily policy editing requires the [cleanup integration update](docs/USER_GUIDE.md#daily-policy-integration) on existing installations. The editor shows its status; routine interface installation does not replace the system helper.
 
 Open **Tend** from the application launcher and pin it to your dock. Routine interface updates do not invoke sudo or pkexec. See the [user guide](docs/USER_GUIDE.md) for helper authorization and recovery.
 

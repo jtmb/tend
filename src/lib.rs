@@ -96,3 +96,5 @@ pub mod task_stats;
 pub mod workstation;
 
 pub mod presentation;
+
+pub mod daily_policy;
