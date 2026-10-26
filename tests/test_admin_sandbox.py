@@ -52,6 +52,18 @@ elif name=='gsettings':
     path=Path('/qa/animations')
     if args[0]=='get': print(path.read_text().strip() if path.exists() else 'true')
     else: path.write_text(args[-1])
+elif name=='docker':
+    if args[0]=='context':
+        path=Path('/qa/docker-endpoint')
+        print(path.read_text() if path.exists() else 'unix:///var/run/docker.sock')
+    elif args[0]=='ps': print('a'*64)
+    elif args[0]=='inspect':
+        delay=Path('/qa/docker-delay')
+        if delay.exists():
+            import time
+            time.sleep(float(delay.read_text()))
+        print(Path('/qa/docker-inspect.jsonl').read_text(),end='')
+    else: raise RuntimeError('Unexpected Docker mutation or command')
 elif name=='runuser':
     if '/usr/bin/docker' in args:
         action=args[args.index('/usr/bin/docker')+1:]
@@ -117,7 +129,7 @@ class AdminSandboxTests(unittest.TestCase):
                 '--ro-bind',str(self.stage/'generators'),'/usr/lib/systemd/system-generators',
                 '--ro-bind',str(ROOT/'target/debug/examples/qa-api' if api else BINARY),'/qa/tend-admin']
         for command in ['id','getent','systemctl','apt-get','apt-config',
-                        'unattended-upgrade','date','notify-send','df','crontab','gsettings']:
+                        'unattended-upgrade','date','notify-send','df','crontab','gsettings','docker']:
             cmd += ['--ro-bind',str(self.stage/'qa/mock-command'),'/usr/bin/'+command]
         cmd += ['--ro-bind',str(self.stage/'qa/mock-command'),'/usr/sbin/runuser',
                 '--clearenv','--setenv','PATH','/usr/bin:/usr/sbin',
@@ -152,6 +164,39 @@ class AdminSandboxTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode,0)
                 self.assertIn('authentication',result.stderr)
         self.assertTrue(all(c['program']=='id' for c in self.commands()))
+
+    def test_workspace_docker_queries_are_bounded_readonly_and_use_directory_labels(self):
+        settings=dict(version=1,projects=[dict(id='project',name='Fixture',root='/projects/a')])
+        container=dict(id='a'*64,name='/api',state='running',compose_directory='/projects/a',compose_project='same-name',compose_service='api')
+        self.write('qa/docker-inspect.jsonl',json.dumps(container)+'\n')
+        result=self.invoke('workspace-containers',None,json.dumps(settings),api=True)
+        self.assert_ok(result)
+        self.assertEqual(json.loads(result.stdout)[0]['workspace_id'],'project')
+        commands=[c for c in self.commands() if c['program']=='docker']
+        self.assertEqual([c['args'][0] for c in commands],['context','ps','inspect'])
+        self.assertNotIn('.Config.Env',commands[-1]['args'][2])
+        self.assertNotIn('.Config.Cmd',commands[-1]['args'][2])
+        failed=self.invoke('workspace-containers',None,json.dumps(settings),api=True,fail='docker:inspect')
+        self.assertNotEqual(failed.returncode,0)
+        self.write('qa/docker-endpoint','ssh://fixture-remote')
+        before=len(self.commands())
+        remote=self.invoke('workspace-containers',None,json.dumps(settings),api=True)
+        self.assertNotEqual(remote.returncode,0)
+        self.assertIn('local Docker Unix socket',remote.stderr)
+        self.assertEqual([c['args'][0] for c in self.commands()[before:]],['context'])
+
+    def test_workspace_docker_timeout_and_output_limits_fail_without_mutations(self):
+        settings=dict(version=1,projects=[])
+        self.write('qa/docker-inspect.jsonl','x'*(2*1024*1024+20))
+        large=self.invoke('workspace-containers',None,json.dumps(settings),api=True)
+        self.assertNotEqual(large.returncode,0)
+        self.assertIn('bounded query size',large.stderr)
+        self.write('qa/docker-inspect.jsonl','{}\n')
+        self.write('qa/docker-delay','8')
+        delayed=self.invoke('workspace-containers',None,json.dumps(settings),api=True)
+        self.assertNotEqual(delayed.returncode,0)
+        self.assertIn('timed out',delayed.stderr)
+        self.assertTrue(all(c['args'][0] in ('context','ps','inspect') for c in self.commands()))
 
     def test_schedule_save_disabled_and_command_failure_rolls_back(self):
         self.assert_ok(self.invoke('apply',SETTINGS))

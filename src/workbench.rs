@@ -242,8 +242,9 @@ fn choose_folder(win: &adw::ApplicationWindow, entry: &gtk::Entry) {
     });
 }
 
-pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    storage(stack, win);
+pub struct StorageLocation {pub path:gtk::Entry}
+pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) -> StorageLocation {
+    let location=storage(stack, win);
     crate::cleanup_policy_ui::manual(stack, win);
     crate::cleanup_policy_ui::daily(stack, win);
     crate::cleanup_ui::schedule_page(stack);
@@ -254,9 +255,10 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     development(stack, win);
     updates(stack, win);
     recovery(stack, win);
+    location
 }
-fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
-    let p=page("Storage","Scan a folder to find large files and development directories. Scans stay on this filesystem and skip symbolic links.");
+fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) -> StorageLocation {
+    let p=page("Storage","Find large files and compare requested metadata scans. History keeps two complete snapshots per folder; incomplete scans preserve the previous baseline.");
     let controls = buttons(&p);
     let path = gtk::Entry::builder()
         .hexpand(true)
@@ -289,6 +291,7 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         "Choose a folder, then Scan folder. Large entries will have an Open button.",
     );
     exports(&p, &view);
+    crate::storage_history_ui::attach(&p,&path);
     let v = view.clone();
     mounts.connect_clicked(move |b| report_job(b, &v, w::system_report));
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -299,6 +302,7 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         c.store(true, Ordering::Relaxed);
         glib::Propagation::Proceed
     });
+    let location=StorageLocation {path:path.clone()};
     start.connect_clicked(move |b| {
         cancelled.store(false, Ordering::Relaxed);
         view.buffer().set_text("Working…");
@@ -338,10 +342,7 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         let root = PathBuf::from(path.text().as_str());
         let c = cancelled.clone();
         job(
-            move || {
-                w::scan(&root, c, progress)
-                    .and_then(|s| serde_json::to_string(&s).map_err(|e| e.to_string()))
-            },
+            move || tend::history::snapshots::scan(&root,c,progress),
             move |r| {
                 finished.set(true);
                 b.set_sensitive(true);
@@ -352,10 +353,10 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                 while let Some(child) = list.first_child() {
                     list.remove(&child);
                 }
-                match r.and_then(|s| serde_json::from_str::<w::Scan>(&s).map_err(|e| e.to_string()))
-                {
-                    Ok(s) => {
-                        let report = w::scan_text(&s);
+                match r {
+                    Ok(outcome) => {
+                        let s=outcome.scan;
+                        let report = format!("{}\n{}",w::scan_text(&s),outcome.note);
                         status.set_text(&format!(
                             "{} • {} files{}",
                             w::bytes(s.allocated),
@@ -393,6 +394,7 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         );
     });
     stack.add_titled(&scroll(&p), Some("storage"), "Storage");
+    location
 }
 fn startup(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let p=page("Startup & services","Manage login applications and optional services installed in your user account. Changes affect future activation; they do not close running apps.");

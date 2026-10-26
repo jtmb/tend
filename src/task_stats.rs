@@ -4,6 +4,7 @@ use std::{collections::HashMap, fs, os::unix::fs::MetadataExt, time::Instant};
 #[derive(Clone, Default)]
 pub struct Task {
     pub pid: u32,
+    pub parent_pid: u32,
     pub start: u64,
     pub ticks: u64,
     pub name: String,
@@ -17,6 +18,7 @@ pub struct Task {
     pub write_rate: Option<f64>,
     pub status: String,
     pub executable: String,
+    pub working_directory: Option<std::path::PathBuf>,
 }
 #[derive(Clone, Default)]
 pub struct Disk {
@@ -38,6 +40,9 @@ pub struct Adapter {
 }
 #[derive(Clone)]
 pub struct Snapshot {
+    pub boot_time_ms: Option<u64>,
+    pub boot_id: String,
+    pub applications: Vec<crate::process_groups::ApplicationGroup>,
     pub at: Instant,
     pub system: Sample,
     pub tasks: Vec<Task>,
@@ -71,6 +76,16 @@ pub fn parse_net(text: &str) -> Vec<Adapter> {
 }
 pub fn collect(previous: Option<&Snapshot>) -> Snapshot {
     let at = Instant::now();
+    let boot_time_ms = crate::observations::boot_millis();
+    let previous = previous.filter(|p| {
+        p.boot_id == crate::observations::boot_id()
+            && !crate::observations::sample_interval(
+                p.boot_time_ms,
+                boot_time_ms,
+                at.duration_since(p.at),
+            )
+            .1
+    });
     let elapsed = previous
         .map(|p| at.duration_since(p.at).as_secs_f64())
         .unwrap_or(1.);
@@ -145,6 +160,7 @@ pub fn collect(previous: Option<&Snapshot>) -> Snapshot {
                 .unwrap_or_default();
             tasks.push(Task {
                 pid,
+                parent_pid: num(1).min(u32::MAX as u64) as u32,
                 start,
                 ticks,
                 name,
@@ -160,6 +176,11 @@ pub fn collect(previous: Option<&Snapshot>) -> Snapshot {
                 executable: fs::read_link(entry.path().join("exe"))
                     .map(|p| p.to_string_lossy().into())
                     .unwrap_or_else(|_| "Not accessible".into()),
+                working_directory: if uid == unsafe { libc::geteuid() } {
+                    fs::read_link(entry.path().join("cwd")).ok()
+                } else {
+                    None
+                },
             });
         }
     }
@@ -242,7 +263,15 @@ pub fn collect(previous: Option<&Snapshot>) -> Snapshot {
             }
         }
     }
+    let applications = crate::process_groups::applications(
+        &tasks,
+        crate::observations::boot_id(),
+        &crate::process_groups::catalog(),
+    );
     Snapshot {
+        boot_time_ms,
+        boot_id: crate::observations::boot_id().into(),
+        applications,
         at,
         system,
         tasks,

@@ -9,9 +9,10 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import resource
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery'])
+parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion'])
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 os.chdir(repo)
@@ -31,7 +32,8 @@ def run(name, command, values=None, screen='3000x2000x24'):
     current = env | (values or {})
     with (output/f'{name}.log').open('w') as log:
         subprocess.run(['xvfb-run','-a','-s',f'-screen 0 {screen}',*command],env=current,
-                       stdout=log,stderr=subprocess.STDOUT,check=True,timeout=240)
+                       stdout=log,stderr=subprocess.STDOUT,check=True,timeout=240,
+                       preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE,(0,0)))
     print(name, 'passed', flush=True)
 
 
@@ -45,6 +47,9 @@ if args.mode == 'matrix':
         import hashlib
         p = root/name
         assert p.stat().st_size == fingerprint['bytes'] and hashlib.sha256(p.read_bytes()).hexdigest() == fingerprint['sha256'], name
+elif args.mode == 'expansion':
+    run('expansion',['target/debug/tend'],{'TEND_EXPANSION_QA':str(root/'expansion')},screen='1600x1000x24')
+    print((root/'expansion/expansion-evidence.json').read_text(),flush=True)
 elif args.mode == 'accessibility':
     for variant, settings in [('scale-200',{'GDK_SCALE':'2'}),('large-text',{'TEND_QA_TEXT_SCALE':'1.35'}),('high-contrast',{'ADW_DEBUG_HIGH_CONTRAST':'1'})]:
         for theme in [1,2]:

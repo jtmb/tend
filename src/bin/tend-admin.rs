@@ -104,6 +104,10 @@ fn main() {
 }
 fn execute() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), Some("capabilities" | "--capabilities")) {
+        println!("{}", tend::capabilities::json("administrator"));
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("notify") {
         return notify(
             args.get(1)

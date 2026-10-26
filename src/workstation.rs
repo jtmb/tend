@@ -224,9 +224,9 @@ pub fn scan_text(s: &Scan) -> String {
         s.files,
         s.skipped,
         if s.cancelled {
-            "Partial scan (cancelled or safety limit reached)"
+            "Partial scan (cancelled, skipped paths or safety limit reached)"
         } else {
-            "Scan complete; symlinks and other filesystems excluded"
+            "Scan complete; symlink contents and other filesystems excluded"
         }
     );
     for (title, items) in [

@@ -5,11 +5,11 @@ use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},
     rc::Rc,
-    sync::mpsc,
+    sync::Arc,
     time::Duration,
 };
 use tend::{
-    task_stats::{self as stats, Snapshot, Task},
+    task_stats::{Snapshot, Task},
     workstation as w,
 };
 #[derive(Clone, Default)]
@@ -22,7 +22,9 @@ struct Trace {
 }
 #[derive(Default)]
 struct State {
-    previous: Option<Snapshot>,
+    previous: Option<Arc<Snapshot>>,
+    sequence: u64,
+    generation: u64,
     traces: BTreeMap<String, Trace>,
     diagnostics: String,
 }
@@ -84,7 +86,7 @@ fn add_trace(
         t.points.pop_front();
     }
 }
-fn ingest(state: &mut State, s: Snapshot) {
+fn ingest(state: &mut State, s: Arc<Snapshot>) {
     state.diagnostics = w::sample_text(&s.system, state.previous.as_ref().map(|p| &p.system));
     let mem = &s.system;
     let used = mem.memory_total.saturating_sub(mem.memory_available);
@@ -174,6 +176,7 @@ fn ingest(state: &mut State, s: Snapshot) {
     state.previous = Some(s);
 }
 struct Ui {
+    groups: Rc<crate::process_tree_ui::Views>,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
     sorted: gtk::SortListModel,
@@ -194,9 +197,20 @@ struct Ui {
     export: gtk::Button,
 }
 impl Ui {
+    fn pause(&self) {
+        self.groups.clear();
+        self.store.remove_all();
+        self.export.set_sensitive(false);
+        self.quit.set_sensitive(false);
+        self.end.set_sensitive(false);
+        self.summary.set_text("Monitoring paused");
+        self.info
+            .set_text("Open Task Manager or refresh to collect a new snapshot.");
+    }
     fn update(&self, state: &State) {
         self.export.set_sensitive(state.previous.is_some());
         let Some(s) = &state.previous else { return };
+        self.groups.update(s.clone());
         let selected = self.selection.selected_item().map(|v| {
             let t = task(&v);
             (t.pid, t.start)
@@ -450,6 +464,19 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         filter.changed(gtk::FilterChange::Different);
     });
     tabs.add_titled(&process, Some("processes"), "Processes");
+    let (target, process_selection, process_sorted) =
+        (tabs.clone(), selection.clone(), sorted.clone());
+    let groups = crate::process_tree_ui::Views::new(&tabs, move |pid, start| {
+        target.set_visible_child_name("processes");
+        for index in 0..process_sorted.n_items() {
+            let object = process_sorted.item(index).unwrap();
+            let t = task(&object);
+            if t.pid == pid && t.start == start {
+                process_selection.set_selected(index);
+                break;
+            }
+        }
+    });
     let performance = gtk::Box::new(Orientation::Horizontal, 16);
     let resources = gtk::ListBox::new();
     resources.add_css_class("boxed-list");
@@ -513,6 +540,8 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     controls.insert(&speed, -1);
     let refresh = gtk::Button::with_label("Refresh now");
     controls.insert(&refresh, -1);
+    let names = gtk::Button::with_label("Refresh app names");
+    controls.insert(&names, -1);
     let export = gtk::Button::with_label("Export snapshot");
     export.set_sensitive(false);
     controls.insert(&export, -1);
@@ -525,6 +554,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let state = Rc::new(RefCell::new(State::default()));
     let selected = Rc::new(RefCell::new("cpu".into()));
     let ui = Rc::new(Ui {
+        groups,
         store,
         selection: selection.clone(),
         sorted,
@@ -675,37 +705,65 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             if busy.replace(true) {
                 return;
             }
-            let previous = data.borrow().previous.clone();
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(stats::collect(previous.as_ref()));
-            });
             let (data, ui, busy) = (data.clone(), ui.clone(), busy.clone());
-            glib::timeout_add_local(Duration::from_millis(80), move || match rx.try_recv() {
-                Ok(s) => {
+            let generation = data.borrow().generation;
+            let failed = (ui.clone(), busy.clone());
+            if let Err(error) =
+                crate::monitor::request(tend::sampler::Detail::Full, move |result| {
                     busy.set(false);
-                    ingest(&mut data.borrow_mut(), s);
-                    ui.update(&data.borrow());
-                    glib::ControlFlow::Break
-                }
-                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(_) => {
-                    busy.set(false);
-                    ui.status
-                        .set_text("Collection stopped. Choose Refresh now to retry.");
-                    glib::ControlFlow::Break
-                }
-            });
+                    if data.borrow().generation != generation {
+                        return;
+                    }
+                    match result {
+                        Ok(capture) => {
+                            if let Some(snapshot) = &capture.full {
+                                let changed = {
+                                    let mut state = data.borrow_mut();
+                                    if state.sequence == capture.sequence {
+                                        false
+                                    } else {
+                                        state.sequence = capture.sequence;
+                                        ingest(&mut state, snapshot.clone());
+                                        true
+                                    }
+                                };
+                                // GTK updates can synchronously emit selection
+                                // signals. Release the exclusive state borrow first.
+                                if changed {
+                                    ui.update(&data.borrow());
+                                }
+                            }
+                        }
+                        Err(error) => ui.status.set_text(&format!("Collection stopped: {error}")),
+                    }
+                })
+            {
+                failed.1.set(false);
+                failed.0.status.set_text(&error);
+            }
         }
     });
     let tick_refresh = tick.clone();
     refresh.connect_clicked(move |_| tick_refresh());
-    let source = Rc::new(RefCell::new(None::<glib::SourceId>));
+    let tick_names = tick.clone();
+    names.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        let (button, tick) = (button.clone(), tick_names.clone());
+        crate::job(
+            || {
+                tend::process_groups::refresh_catalog();
+                Ok(())
+            },
+            move |_| {
+                button.set_sensitive(true);
+                tick();
+            },
+        );
+    });
+    let source = Rc::new(RefCell::new(None::<crate::monitor::Handle>));
     let source_close = source.clone();
     win.connect_close_request(move |_| {
-        if let Some(s) = source_close.borrow_mut().take() {
-            s.remove();
-        }
+        source_close.borrow_mut().take();
         glib::Propagation::Proceed
     });
     let start: Rc<dyn Fn()> = Rc::new({
@@ -714,10 +772,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         let speed = speed.downgrade();
         let data = state.clone();
         let export = export.clone();
+        let ui = ui.clone();
         move || {
-            if let Some(s) = source.borrow_mut().take() {
-                s.remove();
-            }
+            source.borrow_mut().take();
             let (Some(stack), Some(speed)) = (stack.upgrade(), speed.upgrade()) else {
                 return;
             };
@@ -734,24 +791,49 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             if !active || minimized || stack.visible_child_name().as_deref() != Some("task-manager")
             {
                 data.borrow_mut().previous = None;
+                data.borrow_mut().generation += 1;
+                ui.pause();
                 export.set_sensitive(false);
                 return;
             }
-            tick();
             let seconds = match speed.selected() {
                 1 => 1,
                 2 => 2,
                 3 => 5,
-                _ => return,
-            };
-            let tick = tick.clone();
-            *source.borrow_mut() = Some(glib::timeout_add_local(
-                Duration::from_secs(seconds),
-                move || {
+                _ => {
                     tick();
-                    glib::ControlFlow::Continue
+                    return;
+                }
+            };
+            let (data, ui) = (data.clone(), ui.clone());
+            let failed = ui.clone();
+            match crate::monitor::subscribe(
+                tend::sampler::Detail::Full,
+                Duration::from_secs(seconds),
+                move |result| match result {
+                    Ok(capture) => {
+                        if let Some(snapshot) = &capture.full {
+                            let changed = {
+                                let mut state = data.borrow_mut();
+                                if state.sequence == capture.sequence {
+                                    false
+                                } else {
+                                    state.sequence = capture.sequence;
+                                    ingest(&mut state, snapshot.clone());
+                                    true
+                                }
+                            };
+                            if changed {
+                                ui.update(&data.borrow());
+                            }
+                        }
+                    }
+                    Err(error) => ui.status.set_text(&format!("Collection stopped: {error}")),
                 },
-            ));
+            ) {
+                Ok(handle) => *source.borrow_mut() = Some(handle),
+                Err(error) => failed.status.set_text(&error),
+            }
         }
     });
     let state_start = start.clone();

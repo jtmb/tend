@@ -3,9 +3,14 @@ mod cleanup_ui;
 #[cfg(feature = "docs-demo")]
 mod docs_demo;
 mod editor;
+mod diagnostics_ui;
 mod log_reader;
 mod maintenance_ui;
+mod monitor;
 mod panel;
+mod process_tree_ui;
+mod storage_history_ui;
+mod workspaces_ui;
 mod task_manager;
 mod workbench;
 use adw::prelude::*;
@@ -413,7 +418,9 @@ fn build(app: &adw::Application) {
         "caption",
     ));
     stack.add_titled(&scroll(&home), Some("overview"), "Overview");
-    workbench::add(&stack, &win);
+    let storage=workbench::add(&stack, &win);
+    workspaces_ui::add(&stack,&win,storage);
+    diagnostics_ui::add(&stack);
     maintenance_ui::add(&stack, &win);
     let care = page(
         "Appearance",
@@ -562,15 +569,17 @@ fn build(app: &adw::Application) {
                 (
                     "task-manager",
                     "Task Manager",
-                    "utilities-system-monitor-symbolic",
+                    "view-list-bullet-symbolic",
                 ),
                 ("system-logs", "System logs", "view-list-symbolic"),
+                ("diagnostics", "Diagnostics", "edit-find-symbolic"),
             ],
         ),
         (
             "Manage",
             vec![
                 ("storage", "Storage", "drive-harddisk-symbolic"),
+                ("workspaces", "Workspaces", "folder-symbolic"),
                 ("cleanup", "Disk cleanup", "edit-clear-all-symbolic"),
                 ("startup", "Startup & services", "system-run-symbolic"),
                 ("tuning", "Performance", "preferences-system-symbolic"),
@@ -639,6 +648,15 @@ fn build(app: &adw::Application) {
         return;
     }
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_PERF_QA").is_some() {
+        return;
+    }
+    #[cfg(feature = "docs-demo")]
+    if let Ok(directory) = std::env::var("TEND_EXPANSION_QA") {
+        docs_demo::expansion_qa(app, &win, &outer, &stack, &directory);
+        return;
+    }
     #[cfg(feature = "docs-demo")]
     if let Ok(directory) = std::env::var("TEND_QA_DIR") {
         docs_demo::qa(app, &win, &outer, &stack, &directory);
@@ -750,5 +768,6 @@ fn main() -> glib::ExitCode {
             build(app);
         }
     });
+    app.connect_shutdown(|_| monitor::shutdown());
     app.run()
 }

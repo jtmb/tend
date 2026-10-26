@@ -40,6 +40,9 @@ fn main() {
         Some("animations") => p::animations(args[1] == "true"),
         Some("restore") => p::restore(args[1].parse().unwrap()),
         Some("signal") => signal_fixture(&args[1]),
+        Some("workspace-containers") => serde_json::from_str::<tend::workspaces::Settings>(&args[1])
+            .map_err(|e|e.to_string()).and_then(|settings| {settings.validate()?;tend::workspaces::containers(&settings)
+                .and_then(|containers|serde_json::to_string(&containers).map_err(|e|e.to_string()))}),
         _ => Err("Unsupported QA action".into()),
     };
     match result {

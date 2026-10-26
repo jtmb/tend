@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+pub mod diagnostics;
+pub mod workspaces;
 use std::{fs, process::Command};
 pub const CONFIG: &str = "/etc/tend/settings.json";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -115,3 +117,8 @@ pub mod workstation;
 pub mod presentation;
 
 pub mod daily_policy;
+pub mod observations;
+pub mod sampler;
+pub mod history;
+pub mod capabilities;
+pub mod process_groups;

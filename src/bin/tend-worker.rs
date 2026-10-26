@@ -8,6 +8,19 @@ fn main() {
 }
 fn run() -> Result<(), String> {
     match std::env::args().nth(1).as_deref() {
+        Some("capabilities" | "--capabilities") => println!("{}", tend::capabilities::json("worker")),
+        Some("observe") => {
+            let hub=tend::sampler::Hub::new();
+            let sample=hub.request(tend::sampler::Detail::Basic).wait(std::time::Duration::from_secs(10))
+                .ok_or("Observation timed out")??;
+            println!("{}",serde_json::to_string(&sample.observation).map_err(|e|e.to_string())?);
+        }
+        Some("history") => {
+            let events=match tend::history::History::existing()? {
+                Some(store)=>store.events(40,None,None)?.events, None=>vec![],
+            };
+            println!("{}",serde_json::to_string(&events).map_err(|e|e.to_string())?);
+        }
         Some("cleanup") => {
             let mut s = String::new();
             std::io::stdin()

@@ -56,7 +56,7 @@ the fixture policy files: save/reload, discard, unsaved defaults, stale previews
 independent policies, confirmation cancellation, and malformed-file errors.
 Set `TEND_QA_STATE_ONLY=1` for a focused replay of interactions and error states
 after a complete matrix run.
-It captures all 15 pages at desktop/dark and narrow/light sizes, both cleanup
+It captures all 17 pages at desktop/dark and narrow/light sizes, both cleanup
 page bottoms, and the rule/confirmation/error states. It exits the separate
 preview through the real Quit action. No cleanup, updates, cron save, system
 policy save or process action is activated. Cache files and sample journal
@@ -95,3 +95,22 @@ The panel check uses a private bus with **no service activation directories**.
 A fake host inspects Tend's real StatusNotifierItem and DBusMenu objects, observes
 the actual Close button hiding the preview, opens it through the menu, then proves
 Quit exits that preview process. It never touches the user's session bus.
+
+
+## Expansion checks
+
+`python3 docs/demo/design-checks.py expansion` runs the phase 1–3 workflows in a
+fresh retained preview: two metadata scans and file-change details; workspace
+add/edit/save/discard/remove, sampled cwd matching, Compose label fixtures and
+cached storage; expandable app/process views; and marked diagnostic recordings,
+saving, loading, comparison and cancellation. It preserves all six prepared
+inputs and never closes the installed Tend instance. Preview assertion failures
+have core dumps disabled for this test process tree.
+
+`cargo build --locked -j 1 --features docs-demo --example resource-probe --example index-probe`
+builds optional measurement tools. `resource-probe 600` measures the shared
+collector for ten minutes, then verifies that it settles after demand ends.
+`index-probe 1000000` writes generated metadata to a new retained private fixture;
+it measures indexing memory and duration, not actual filesystem traversal speed.
+The fixture uses a 2048 MiB history budget and creates no synthetic content files.
+These tools are excluded from normal app builds and installation.

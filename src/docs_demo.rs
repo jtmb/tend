@@ -158,6 +158,10 @@ fn wait_main_context(duration: Duration) {
     glib::timeout_add_local_once(duration, move || on_timeout.quit());
     main_loop.run();
 }
+fn wait_until(test:impl Fn()->bool,timeout:Duration)->bool {
+    let started=std::time::Instant::now();
+    while !test()&&started.elapsed()<timeout {wait_main_context(Duration::from_millis(50));}test()
+}
 fn dropdown(stack: &gtk::Stack, tooltip: &str) -> gtk::DropDown {
     descendants(&page(stack, "system-logs"))
         .into_iter()
@@ -564,6 +568,8 @@ pub fn qa(
         "cleanup-scheduling",
         "storage",
         "task-manager",
+        "diagnostics",
+        "workspaces",
         "system-logs",
         "startup",
         "tuning",
@@ -1765,4 +1771,113 @@ pub fn validate_capture(outer: &gtk::Box, stack: &gtk::Stack, path: &str) {
         serde_json::to_vec_pretty(&report).unwrap(),
     )
     .unwrap();
+}
+
+/// Phase-specific real-widget regression checks. Runs in a retained fixture and
+/// exits only this NON_UNIQUE preview, never the installed/running application.
+pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::Box,stack:&gtk::Stack,directory:&str) {
+    assert!(std::env::var_os("TEND_DEMO_DIR").is_some());
+    let directory=std::path::PathBuf::from(directory);fs::create_dir_all(&directory).unwrap();
+    let (app,win,outer,stack)=(app.clone(),win.clone(),outer.clone(),stack.clone());
+    stack.set_transition_type(gtk::StackTransitionType::None);
+    glib::timeout_add_local_once(Duration::from_millis(700),move || {
+        let mut evidence=vec![];
+        let storage=page(&stack,"storage");stack.set_visible_child_name("storage");
+        let home=tend::workstation::home();let fixture=home.join("qa-history-files");fs::create_dir_all(&fixture).unwrap();
+        fs::write(fixture.join("alpha"),b"fixture first").unwrap();
+        let entry=descendants(&storage).into_iter().filter_map(|w|w.downcast::<gtk::Entry>().ok()).find(|e|e.placeholder_text().as_deref()==Some("Folder to scan")).unwrap();
+        entry.set_text(&fixture.to_string_lossy());button(&storage,"Scan folder").emit_clicked();
+        let report=descendants(&storage).into_iter().filter_map(|w|w.downcast::<gtk::TextView>().ok()).next().unwrap();
+        assert!(wait_for_report(&report,Duration::from_secs(15)));assert!(text(&storage).contains("Initial complete baseline saved"),"{}",text(&storage));
+        fs::rename(fixture.join("alpha"),home.join("retained-alpha")).unwrap();fs::write(fixture.join("beta"),b"fixture second").unwrap();
+        button(&storage,"Scan folder").emit_clicked();assert!(wait_for_report(&report,Duration::from_secs(15)));assert!(text(&storage).contains("Complete metadata snapshot saved"));
+        button(&storage,"Load storage changes").emit_clicked();
+        let deadline=std::time::Instant::now()+Duration::from_secs(15);
+        while !button(&storage,"Load storage changes").is_sensitive()&&std::time::Instant::now()<deadline {wait_main_context(Duration::from_millis(50));}
+        assert!(text(&storage).contains("Showing 2 changes"),"{}",text(&storage));
+        let table=descendants(&storage).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();
+        assert_eq!(table.model().unwrap().n_items(),2);table.model().unwrap().select_item(0,true);
+        assert!(text(&storage).contains("Logical:"));
+        evidence.push(json!({"storage_native_scan_baseline":true,"storage_second_scan_comparison":true,"storage_loaded_two_changes":true,"storage_selected_details":true,"files_retained":home.join("retained-alpha").exists()}));
+        let workspace=page(&stack,"workspaces");stack.set_visible_child_name("workspaces");
+        descendants(&workspace).into_iter().filter_map(|w|w.downcast::<gtk::Expander>().ok()).find(|e|e.label().as_deref()==Some("Add or edit a project")).unwrap().set_expanded(true);
+        button(&workspace,"Load workspaces").emit_clicked();assert!(wait_until(||button(&workspace,"Add project to draft").is_sensitive(),Duration::from_secs(15)));
+        let entry_row=|title:&str|descendants(&workspace).into_iter().filter_map(|w|w.downcast::<adw::EntryRow>().ok()).find(|e|e.title()==title).unwrap();
+        entry_row("Project name").set_text("QA workspace");entry_row("Absolute project folder").set_text(&fixture.to_string_lossy());
+        button(&workspace,"Add project to draft").emit_clicked();assert!(wait_until(||text(&workspace).contains("Project draft updated"),Duration::from_secs(15)));
+        button(&workspace,"Save changes").emit_clicked();assert!(wait_until(||text(&workspace).contains("Workspace settings saved"),Duration::from_secs(15)));
+        assert_eq!(tend::workspaces::Settings::read().unwrap().projects.len(),1);
+        let original_cwd=std::env::current_dir().unwrap();std::env::set_current_dir(&fixture).unwrap();
+        button(&workspace,"Refresh project activity").emit_clicked();assert!(wait_until(||text(&workspace).contains("Activity sampled"),Duration::from_secs(15)));std::env::set_current_dir(original_cwd).unwrap();
+        let activity=descendants(&workspace).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();assert!(activity.model().unwrap().n_items()>0,"Preview process should match its fixture cwd");
+        fs::write(home.join("demo-workspaces-docker.jsonl"),json!({"id":"a".repeat(64),"name":"/sample-api","state":"running","compose_directory":fixture.to_str(),"compose_project":"qa","compose_service":"api"}).to_string()).unwrap();
+        button(&workspace,"Inspect Compose labels").emit_clicked();assert!(wait_until(||text(&workspace).contains("sample-api"),Duration::from_secs(15)));
+        button(&workspace,"Load last scan").emit_clicked();assert!(wait_until(||text(&workspace).contains("Recorded scan for QA workspace"),Duration::from_secs(15)));
+        for width in [720,1100] {
+            win.set_default_size(width,760);wait_main_context(Duration::from_millis(250));
+            let paint=gtk::WidgetPaintable::new(Some(&outer));let snapshot=gtk::Snapshot::new();paint.snapshot(&snapshot,outer.width() as f64,outer.height() as f64);
+            let texture=win.renderer().unwrap().render_texture(&snapshot.to_node().unwrap(),None);texture.save_to_png(directory.join(format!("workspaces-{width}.png"))).unwrap();
+        }
+        button(&workspace,"Inspect project storage").emit_clicked();assert_eq!(stack.visible_child_name().as_deref(),Some("storage"));assert_eq!(entry.text().as_str(),fixture.to_string_lossy());stack.set_visible_child_name("workspaces");
+        button(&workspace,"Edit selected").emit_clicked();entry_row("Project name").set_text("Unsaved renamed project");button(&workspace,"Update project draft").emit_clicked();assert!(wait_until(||text(&workspace).contains("Project draft updated"),Duration::from_secs(15)));
+        button(&workspace,"Discard changes").emit_clicked();assert!(text(&workspace).contains("QA workspace"));assert_eq!(tend::workspaces::Settings::read().unwrap().projects[0].name,"QA workspace");
+        button(&workspace,"Remove from draft").emit_clicked();button(&workspace,"Discard changes").emit_clicked();assert!(text(&workspace).contains("QA workspace"));
+        button(&workspace,"Remove from draft").emit_clicked();button(&workspace,"Save changes").emit_clicked();assert!(wait_until(||text(&workspace).contains("Workspace settings saved"),Duration::from_secs(15)));assert!(tend::workspaces::Settings::read().unwrap().projects.is_empty());
+        evidence.push(json!({"workspace_add_edit_save_discard_remove":true,"workspace_live_cwd_mapping":true,"workspace_compose_label_fixture":true,"workspace_cached_scan":true,"workspace_storage_navigation":true,"no_project_files_changed":fixture.join("beta").exists()}));
+        let task=page(&stack,"task-manager");stack.set_visible_child_name("task-manager");refresh(&stack);
+        let process=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();
+        assert!(wait_for_task_rows(&process.model().unwrap(),Duration::from_secs(15)));
+        let tabs=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::Stack>().ok()).find(|s|s.child_by_name("apps").is_some()).unwrap();
+        for name in ["apps","process-tree"] {
+            tabs.set_visible_child_name(name);wait_main_context(Duration::from_millis(150));
+            let root=tabs.child_by_name(name).unwrap();
+            let table=descendants(&root).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();
+            let selection=table.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
+            let model=selection.model().unwrap().downcast::<gtk::TreeListModel>().unwrap();
+            let original=model.n_items();assert!(original>0,"{name} has no rows");
+            let mut expanded=false;
+            for i in 0..model.n_items() {let row=model.row(i).unwrap();if row.is_expandable() {row.set_expanded(true);expanded=true;break}}
+            assert!(model.n_items()>=original);
+            let search=descendants(&root).into_iter().filter_map(|w|w.downcast::<gtk::SearchEntry>().ok()).next().unwrap();
+            search.set_text("tend-no-match-qa-identity");wait_main_context(Duration::from_millis(300));assert_eq!(model.n_items(),0);
+            search.set_text("");wait_main_context(Duration::from_millis(300));assert!(model.n_items()>=original);
+            let check=descendants(&root).into_iter().filter_map(|w|w.downcast::<gtk::CheckButton>().ok()).next().unwrap();check.set_active(true);assert!(model.n_items()>=original);check.set_active(false);
+            // A child opens the existing process details; no signal is sent.
+            let mut linked=false;
+            for i in 0..model.n_items().min(500) {
+                let row=model.row(i).unwrap();row.set_expanded(true);selection.set_selected(i);
+                let button=button(&root,"Show selected process");
+                if button.is_sensitive() {button.emit_clicked();assert_eq!(tabs.visible_child_name().as_deref(),Some("processes"));linked=true;break}
+            }
+            assert!(linked,"No process details link in {name}");
+            evidence.push(json!({"view":name,"rows":original,"expanded":expanded,"search":true,"user_filter":true,"process_link":true}));
+        }
+        stack.set_visible_child_name("diagnostics");let diag=page(&stack,"diagnostics");
+        assert!(!button(&diag,"Finish recording").is_sensitive());assert!(!button(&diag,"Save recording").is_sensitive());
+        button(&diag,"Load saved recordings").emit_clicked();wait_main_context(Duration::from_millis(500));assert!(text(&diag).contains("No saved recordings"));
+        for index in 0..2 {
+            button(&diag,"Start recording").emit_clicked();assert!(!button(&diag,"Start recording").is_sensitive());
+            let marker=descendants(&diag).into_iter().filter_map(|w|w.downcast::<gtk::Entry>().ok()).find(|e|e.placeholder_text().as_deref()==Some("e.g. Scrolling stalled")).unwrap();
+            marker.set_text("QA scrolling interaction");button(&diag,"Add workload marker").emit_clicked();
+            wait_main_context(Duration::from_millis(4500));button(&diag,"Finish recording").emit_clicked();
+            assert!(button(&diag,"Save recording").is_sensitive());assert!(text(&diag).contains("QA scrolling interaction"));
+            button(&diag,"Save recording").emit_clicked();wait_main_context(Duration::from_millis(1000));
+            assert!(text(&diag).contains("saved privately"),"Save failed: {}",text(&diag));
+            evidence.push(json!({"recording":index,"real_samples":true,"marker":true,"finished":true,"saved":true}));
+        }
+        button(&diag,"Load saved recordings").emit_clicked();wait_main_context(Duration::from_millis(700));assert!(button(&diag,"Compare recordings").is_sensitive());
+        button(&diag,"View baseline").emit_clicked();assert!(text(&diag).contains("Observed signals"));
+        button(&diag,"Compare recordings").emit_clicked();assert!(text(&diag).contains("Insufficient evidence"));
+        button(&diag,"Start recording").emit_clicked();wait_main_context(Duration::from_millis(100));button(&diag,"Discard recording").emit_clicked();assert!(!button(&diag,"Save recording").is_sensitive());
+        let sessions=tend::diagnostics::load().unwrap();assert_eq!(sessions.len(),2);
+        evidence.push(json!({"comparison_short_run_warning":true,"cancel_kept_history_unchanged":true,"sessions":sessions.len()}));
+        for width in [720,1100] {
+            win.set_default_size(width,760);wait_main_context(Duration::from_millis(250));
+            let paint=gtk::WidgetPaintable::new(Some(&outer));let snapshot=gtk::Snapshot::new();paint.snapshot(&snapshot,outer.width() as f64,outer.height() as f64);
+            let node=snapshot.to_node().unwrap();let renderer=win.renderer().unwrap();let texture=renderer.render_texture(&node,None);
+            texture.save_to_png(directory.join(format!("diagnostics-{width}.png"))).unwrap();
+        }
+        fs::write(directory.join("expansion-evidence.json"),serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+        app.activate_action("quit",None);
+    });
 }
