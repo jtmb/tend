@@ -291,7 +291,7 @@ fn storage(stack: &gtk::Stack, win: &adw::ApplicationWindow) -> StorageLocation 
         "Choose a folder, then Scan folder. Large entries will have an Open button.",
     );
     exports(&p, &view);
-    crate::storage_history_ui::attach(&p,&path);
+    crate::storage_history_ui::attach(&p,&path,win);
     let v = view.clone();
     mounts.connect_clicked(move |b| report_job(b, &v, w::system_report));
     let cancelled = Arc::new(AtomicBool::new(false));

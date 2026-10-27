@@ -2170,6 +2170,7 @@ pub fn health_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         let named=|root:&gtk::Widget,name:&str|descendants(root).into_iter().find(|w|w.widget_name()==name).unwrap_or_else(||panic!("Missing monitoring control {name}"));
         let notifications=||->Vec<Value>{fs::read(directory.join("notifications.json")).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_default()};
         assert_eq!(crate::health_ui::summary(),"Monitoring off");assert!(!tend::health::path().exists());assert!(!tend::history::path().exists());
+        history_limits_qa(&win,&stack,&directory);
         stack.set_visible_child_name("care");button(&page(&stack,"care"),"Configure monitoring").emit_clicked();wait_main_context(Duration::from_millis(400));
         let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();
         let enabled=named(&widget,"monitor-enabled").downcast::<gtk::Switch>().unwrap();
@@ -2200,7 +2201,23 @@ pub fn health_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         named(&widget,"monitor-enabled").downcast::<gtk::Switch>().unwrap().set_active(false);button(&widget,"Save changes").emit_clicked();assert!(wait_until(||!crate::health_ui::enabled(),Duration::from_secs(6)));let count=notifications().len();crate::health_ui::qa_observe(&app,100.,start+1000000);wait_main_context(Duration::from_millis(300));assert_eq!(notifications().len(),count);assert_eq!(crate::health_ui::summary(),"Monitoring off");
         dialog.close();drop(widget);drop(dialog);drop(crashes);
         let events=tend::activity::load(&tend::activity::Query{source:2,category:3,..Default::default()},None).unwrap();assert_eq!(events.events.len(),3,"Alert history is missing: {:?}",events.warnings);
-        fs::write(directory.join("health-evidence.json"),serde_json::to_vec_pretty(&json!({"native_save_discard":true,"closed_editor_released":true,"hidden_monitor_delivery":true,"warning_repeat_recovery":true,"snooze_resume":true,"optional_crash_query_deduplicated":true,"disabled_no_delivery":true,"panel_shortcuts":true,"bounded_alert_history":events.events.len(),"notifications":notifications().len(),"fixture_only":true})).unwrap()).unwrap();
+        fs::write(directory.join("health-evidence.json"),serde_json::to_vec_pretty(&json!({"native_save_discard":true,"history_limits_native":true,"closed_editor_released":true,"hidden_monitor_delivery":true,"warning_repeat_recovery":true,"snooze_resume":true,"optional_crash_query_deduplicated":true,"disabled_no_delivery":true,"panel_shortcuts":true,"bounded_alert_history":events.events.len(),"notifications":notifications().len(),"fixture_only":true})).unwrap()).unwrap();
         app.quit();
     });
+}
+
+fn history_limits_qa(win:&adw::ApplicationWindow,stack:&gtk::Stack,directory:&Path){
+    let find=|root:&gtk::Widget,name:&str|descendants(root).into_iter().find(|w|w.widget_name()==name).unwrap().downcast::<gtk::SpinButton>().unwrap();
+    stack.set_visible_child_name("care");button(&page(stack,"care"),"History limits").emit_clicked();wait_main_context(Duration::from_millis(300));
+    let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();let budget=find(&widget,"history-budget");let retention=find(&widget,"history-retention");
+    assert_eq!(budget.value_as_int(),512);assert_eq!(retention.value_as_int(),30);assert!(!button(&widget,"Save changes").is_sensitive());
+    budget.set_value(256.);retention.set_value(14.);button(&widget,"Discard changes").emit_clicked();assert_eq!(budget.value_as_int(),512);assert_eq!(retention.value_as_int(),30);
+    budget.set_value(128.);retention.set_value(45.);button(&widget,"Save changes").emit_clicked();budget.set_value(192.);
+    assert!(wait_until(||tend::history::Settings::read().is_ok_and(|s|s.max_mib==128&&s.retention_days==45)&&button(&widget,"Save changes").is_sensitive(),Duration::from_secs(6)));assert!(text(&widget).contains("Unsaved changes"));button(&widget,"Discard changes").emit_clicked();assert_eq!(budget.value_as_int(),128);
+    for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(400));let paint=gtk::WidgetPaintable::new(Some(win));let shot=gtk::Snapshot::new();paint.snapshot(&shot,win.width() as f64,win.height() as f64);win.renderer().unwrap().render_texture(&shot.to_node().unwrap(),None).save_to_png(directory.join(format!("history-limits-{width}.png"))).unwrap();}
+    let weak=button(&widget,"Save changes").downgrade();dialog.close();drop(widget);drop(dialog);drop(budget);drop(retention);wait_main_context(Duration::from_millis(350));assert!(weak.upgrade().is_none());
+    for target in ["storage","activity"]{stack.set_visible_child_name(target);button(&page(stack,target),"History limits").emit_clicked();wait_main_context(Duration::from_millis(250));let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();assert_eq!(find(&widget,"history-budget").value_as_int(),128);assert_eq!(find(&widget,"history-retention").value_as_int(),45);assert!(!button(&widget,"Save changes").is_sensitive());dialog.close();drop(widget);drop(dialog);wait_main_context(Duration::from_millis(300));}
+    let path=tend::workstation::home().join(".config/tend/history.json");let saved=path.with_extension("qa-saved");fs::rename(&path,&saved).unwrap();tend::workstation::private_write(&path,"{bad fixture").unwrap();
+    button(&page(stack,"activity"),"History limits").emit_clicked();wait_main_context(Duration::from_millis(300));let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();assert!(text(&widget).contains("Saved history limits could not be read"));assert_eq!(find(&widget,"history-budget").value_as_int(),512);dialog.close();drop(widget);drop(dialog);wait_main_context(Duration::from_millis(300));assert_eq!(fs::read(&path).unwrap(),b"{bad fixture");fs::rename(&path,directory.join("invalid-history-settings.json")).unwrap();fs::rename(saved,path).unwrap();
+    assert!(!tend::history::path().exists(),"Saving limits must not create or scan history");
 }

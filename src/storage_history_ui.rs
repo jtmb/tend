@@ -5,16 +5,17 @@ use tend::{
     history::snapshots::{self, Change, ChangeCursor},
     workstation as w,
 };
-pub fn attach(parent: &gtk::Box, path: &gtk::Entry) {
+pub fn attach(parent: &gtk::Box, path: &gtk::Entry,win:&adw::ApplicationWindow) {
     parent.append(&crate::label("Storage changes", "title-2"));
-    parent.append(&crate::label("Thirty days of metadata changes from complete scans. A touched timestamp can count as a change; file contents are never compared. Scans describe an interval, not an atomic filesystem snapshot.","caption"));
+    parent.append(&crate::label("Retained metadata changes from complete scans. A touched timestamp can count as a change; file contents are never compared. Scans describe an interval, not an atomic filesystem snapshot.","caption"));
     let actions = crate::workbench::buttons(parent);
     let load = gtk::Button::with_label("Load storage changes");
     let next = gtk::Button::with_label("Next 200 changes");
     next.set_sensitive(false);
     actions.insert(&load, -1);
     actions.insert(&next, -1);
-    let status=crate::label("History loads only when requested. Paths with unusual filename bytes are preserved in the database.","caption");
+    actions.insert(&crate::history_ui::button(win),-1);
+    let status=crate::label("History loads only when requested. Changes are ordered by recorded date; clock adjustments can change their position. Unusual filename bytes are preserved.","caption");
     parent.append(&status);
     let store = gio::ListStore::new::<glib::BoxedAnyObject>();
     let selection = gtk::SingleSelection::new(Some(store.clone()));

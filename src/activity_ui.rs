@@ -70,6 +70,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     for button in [&load, &next, &journal, &export] {
         actions.insert(button, -1);
     }
+    actions.insert(&crate::history_ui::button(win),-1);
     let status = label(
         "Choose filters and load activity. No background history query is running.",
         "caption",

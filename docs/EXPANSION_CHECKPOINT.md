@@ -1,6 +1,10 @@
-# Expansion checkpoint — phases 1–4 (partial)
+# Expansion checkpoints — phases 1–7 in progress
 
 Source branch: `codex/tend-expansion`, starting from `06a6aae`.
+
+This is a chronological evidence ledger. Earlier sections describe their source
+checkpoint, not current capability support. The latest section and phase table
+in EXPANSION_PLAN.md show the remaining work.
 The expansion remains in progress. No release, installed binary, real cleanup,
 maintenance schedule, restart/login/authentication setting or existing running
 application was changed in this checkpoint.
@@ -262,3 +266,38 @@ settings bundles and reviewed disabled drafts, a native history-limit editor,
 snapshot ordering under wall-clock rollback, final all-feature audit, README
 workflow demo, matching backed-up deployment and publication. Do not declare
 the expansion complete or deployed from these source-only checks.
+
+## Phase 7 — first boundary and settings checkpoint
+
+- Completed scans now select/retain baselines by monotonic SQLite snapshot ID,
+  rather than wall-clock date. A backward system-clock change cannot select an
+  older baseline or evict a newer complete scan. The scan report discloses the
+  discontinuity. Change-list timestamps retain their recorded date; pagination
+  is tested across both out-of-order dates without missing/duplicating records.
+- Added a shared History limits dialog from Storage, Activity and Preferences.
+  Users can review/save/discard the 128–2048 MiB budget and 1–365 day private
+  retention. Saving performs no scan or cleanup; the UI explains snapshot and
+  system-maintenance limits. Details are expandable, with an explicit close
+  button and persistent page-local footer.
+- Renamed the existing Appearance destination to Preferences (same navigation
+  ID), distinguishing automatically saved appearance from reviewed monitoring
+  and history settings. No additional navigation destination was introduced.
+- History settings reads reject symlinks, FIFOs, non-private files and oversized
+  input without blocking or replacing the file. The native invalid-JSON case
+  preserves the original file and does not activate defaults on close.
+- Native tests exercise all three entry points, Save/Discard, edits made during
+  an asynchronous save, reloaded values, invalid settings, released dialog
+  widgets, narrow/wide screenshots and preservation of all original inputs.
+- Latest Rust suite: 84 library tests plus one panel test passed, one existing
+  fixture deletion test ignored. The native monitoring/history suite passes
+  with four notifications on a private test bus. Evidence:
+  ../performance/tend-expansion-phase7-history-{rust,build,native}.log and
+  native-fixtures/tend-workflow-_hn8n0yw.
+
+Still outstanding: versioned settings bundles and per-section disabled-draft
+review; final source/runtime boundary audit (including notification test coverage,
+alert-history write backpressure and accessibility labels); optimized whole-app
+resource/interaction gates and ten-minute enabled monitoring; complete design
+and accessibility matrix; real-workflow README demo; matching backed-up
+deployment and publication. Existing applications and system policies are
+untouched, and the goal remains active.

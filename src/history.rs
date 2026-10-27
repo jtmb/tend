@@ -48,10 +48,14 @@ impl Settings {
         }
         Ok(())
     }
-    pub fn read() -> Result<Self, String> {
-        let path = w::home().join(".config/tend/history.json");
-        let value: Self = match fs::File::open(path) {
+    pub fn read() -> Result<Self, String> {Self::read_at(&w::home().join(".config/tend/history.json"))}
+    fn read_at(path:&Path)->Result<Self,String> {
+        let value: Self = match fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_NONBLOCK).open(path) {
             Ok(file) => {
+                let m=file.metadata().map_err(|e|e.to_string())?;
+                if !m.is_file()||m.uid()!=unsafe{libc::geteuid()}||m.mode()&0o077!=0||m.len()>4096 {
+                    return Err("History settings must be a private regular file, at most 4 KiB.".into());
+                }
                 let mut text = String::new();
                 file.take(4097)
                     .read_to_string(&mut text)
@@ -515,6 +519,15 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path.join("history.sqlite3")
+    }
+    #[test]
+    fn settings_reader_rejects_aliases_fifos_and_unbounded_files() {
+        let path=fixture().with_extension("json");assert_eq!(Settings::read_at(&path).unwrap(),Settings::default());assert!(!path.exists());
+        fs::write(&path,serde_json::to_vec(&Settings::default()).unwrap()).unwrap();fs::set_permissions(&path,fs::Permissions::from_mode(0o600)).unwrap();assert!(Settings::read_at(&path).is_ok());
+        let link=path.with_extension("alias");std::os::unix::fs::symlink(&path,&link).unwrap();assert!(Settings::read_at(&link).is_err());
+        fs::set_permissions(&path,fs::Permissions::from_mode(0o644)).unwrap();assert!(Settings::read_at(&path).is_err());fs::set_permissions(&path,fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&path,vec![b' ';4097]).unwrap();assert!(Settings::read_at(&path).is_err());assert_eq!(fs::metadata(&path).unwrap().len(),4097);
+        use std::os::unix::ffi::OsStrExt;let fifo=path.with_extension("fifo");let name=std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();assert_eq!(unsafe{libc::mkfifo(name.as_ptr(),0o600)},0);assert!(Settings::read_at(&fifo).is_err());
     }
     #[test]
     fn private_quota_store_deduplicates_and_pages_stably() {

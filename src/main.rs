@@ -11,6 +11,7 @@ mod log_reader;
 mod maintenance_ui;
 mod monitor;
 mod health_ui;
+mod history_ui;
 mod panel;
 mod process_tree_ui;
 mod storage_history_ui;
@@ -427,8 +428,8 @@ fn build(app: &adw::Application) {
     diagnostics_ui::add(&stack);
     maintenance_ui::add(&stack, &win);
     let care = page(
-        "Appearance",
-        "These preferences save automatically when changed.",
+        "Preferences",
+        "Appearance changes save automatically. Monitoring and history limits have their own Save and Discard controls.",
     );
     let preference_status = editor::Notice::new();
     care.append(&preference_status.root);
@@ -517,8 +518,9 @@ fn build(app: &adw::Application) {
     care.append(&appearance);
     health_ui::install(app);
     health_ui::add(&care,&win,app);
+    history_ui::add(&care,&win);
     care.append(&label("Tend 0.2", "caption"));
-    stack.add_titled(&scroll(&care), Some("care"), "Appearance");
+    stack.add_titled(&scroll(&care), Some("care"), "Preferences");
     activity_ui::add(&stack,&win);
     let (n, f, l, p, b) = (
         next.clone(),
@@ -571,7 +573,7 @@ fn build(app: &adw::Application) {
                     "Cleanup schedule",
                     "x-office-calendar-symbolic",
                 ),
-                ("care", "Appearance", "applications-graphics-symbolic"),
+                ("care", "Preferences", "preferences-system-symbolic"),
                 ("activity", "Activity", "document-open-recent-symbolic"),
             ],
         ),

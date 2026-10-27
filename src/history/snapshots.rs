@@ -63,6 +63,9 @@ pub fn latest(root: &Path) -> Result<Option<Summary>, String> {
     let Some(store) = History::existing()? else {
         return Ok(None);
     };
+    latest_with(&store,root)
+}
+fn latest_with(store:&History,root:&Path)->Result<Option<Summary>,String>{
     let version: u32 = store
         .db
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -70,7 +73,7 @@ pub fn latest(root: &Path) -> Result<Option<Summary>, String> {
     if version < 2 {
         return Ok(None);
     }
-    store.db.query_row("SELECT started_ms,files,allocated FROM snapshots WHERE root=?1 AND complete=1 ORDER BY started_ms DESC,id DESC LIMIT 1",[root.as_os_str().as_bytes()],|r|Ok(Summary {time_ms:r.get(0)?,files:r.get::<_,i64>(1)?.max(0) as u64,allocated:r.get::<_,i64>(2)?.max(0) as u64})).optional().map_err(error)
+    store.db.query_row("SELECT started_ms,files,allocated FROM snapshots WHERE root=?1 AND complete=1 ORDER BY id DESC LIMIT 1",[root.as_os_str().as_bytes()],|r|Ok(Summary {time_ms:r.get(0)?,files:r.get::<_,i64>(1)?.max(0) as u64,allocated:r.get::<_,i64>(2)?.max(0) as u64})).optional().map_err(error)
 }
 struct Entry {
     path: Vec<u8>,
@@ -553,7 +556,7 @@ impl Writer<'_> {
         }
         self.scan_space()?;
         let tx = self.store.db.transaction().map_err(error)?;
-        tx.execute("UPDATE snapshots SET complete=2 WHERE id IN (SELECT id FROM snapshots WHERE root=?1 AND complete=1 ORDER BY started_ms DESC,id DESC LIMIT -1 OFFSET 1)",[self.root.as_os_str().as_bytes()]).map_err(error)?;
+        tx.execute("UPDATE snapshots SET complete=2 WHERE id IN (SELECT id FROM snapshots WHERE root=?1 AND complete=1 ORDER BY id DESC LIMIT -1 OFFSET 1)",[self.root.as_os_str().as_bytes()]).map_err(error)?;
         tx.execute(
             "UPDATE snapshots SET complete=1,files=?2,allocated=?3 WHERE id=?1",
             params![self.id, integer(report.files)?, integer(report.allocated)?],
@@ -696,7 +699,12 @@ fn scan_with(
         metadata.st_ino.to_le_bytes().to_vec(),
     );
     let filesystem = filesystem_identity(&dir, metadata.st_dev)?;
-    let baseline=store.db.query_row("SELECT id FROM snapshots WHERE root=?1 AND ino=?2 AND filesystem_identity=?3 AND complete=1 ORDER BY started_ms DESC,id DESC LIMIT 1",params![root.as_os_str().as_bytes(),ino,filesystem],|r|r.get(0)).optional().map_err(error)?;
+    // Snapshot IDs are scan order. Wall time can move backwards and must not
+    // select an older baseline or retire a newer completed scan.
+    let baseline_row=store.db.query_row("SELECT id,started_ms FROM snapshots WHERE root=?1 AND ino=?2 AND filesystem_identity=?3 AND complete=1 ORDER BY id DESC LIMIT 1",params![root.as_os_str().as_bytes(),ino,filesystem],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).optional().map_err(error)?;
+    let started_ms=(w::now()*1000) as i64;
+    let clock_backwards=baseline_row.is_some_and(|(_,time)|time>started_ms);
+    let baseline=baseline_row.map(|(id,_)|id);
     store
         .db
         .execute(
@@ -705,7 +713,7 @@ fn scan_with(
                 root.as_os_str().as_bytes(),
                 dev,
                 ino,
-                (w::now() * 1000) as i64,
+                started_ms,
                 filesystem
             ],
         )
@@ -741,6 +749,7 @@ fn scan_with(
         writer.skipped += 1;
     }
     let mut outcome = writer.finish()?;
+    if clock_backwards {outcome.note.push_str(" The system clock is earlier than the preceding scan. Comparison and snapshot retention use scan order; change-list dates retain the recorded clock and can appear out of execution order.");}
     if filesystem.starts_with("boot:") {
         outcome.note.push_str(" Persistent filesystem identity is unavailable here; comparisons conservatively reset after reboot.");
     }
@@ -1024,6 +1033,26 @@ mod tests {
             .changes
             .iter()
             .any(|c| c.snapshot == second.snapshot_id.unwrap() && c.kind == "removed"));
+    }
+    #[test]
+    fn backwards_wall_clock_keeps_latest_baseline_and_both_newest_snapshots() {
+        let (mut store,root)=fixture();let now=(w::now()*1000) as i64;
+        fs::write(root.join("item"),b"first").unwrap();let first=run(&mut store,&root);
+        store.db.execute("UPDATE snapshots SET started_ms=?1 WHERE id=?2",params![now+172800000,first.snapshot_id]).unwrap();
+        fs::write(root.join("item"),b"second version").unwrap();let second=run(&mut store,&root);
+        assert_eq!(second.baseline_id,first.snapshot_id);assert!(second.note.contains("clock is earlier"));
+        store.db.execute("UPDATE snapshots SET started_ms=?1 WHERE id=?2",params![now+86400000,second.snapshot_id]).unwrap();
+        store.db.execute("UPDATE file_changes SET time_ms=?1 WHERE snapshot=?2",params![now+86400000,second.snapshot_id]).unwrap();
+        fs::write(root.join("item"),b"third and latest version").unwrap();let third=run(&mut store,&root);
+        assert_eq!(third.baseline_id,second.snapshot_id);assert!(third.note.contains("clock is earlier"));
+        let ids=store.db.prepare("SELECT id FROM snapshots WHERE complete=1 ORDER BY id").unwrap().query_map([],|r|r.get::<_,i64>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert_eq!(ids,vec![second.snapshot_id.unwrap(),third.snapshot_id.unwrap()]);
+        let expected_time:i64=store.db.query_row("SELECT started_ms FROM snapshots WHERE id=?1",[third.snapshot_id.unwrap()],|r|r.get(0)).unwrap();
+        assert_eq!(latest_with(&store,&root).unwrap().unwrap().time_ms,expected_time);
+        let mut cursor=None;let mut changes=Vec::new();loop{let page=changes_with(&store,&root,cursor.as_ref(),1).unwrap();changes.extend(page.changes);cursor=page.next;if cursor.is_none(){break;}}
+        assert!(changes.iter().any(|c|Some(c.snapshot)==second.snapshot_id));assert!(changes.iter().any(|c|Some(c.snapshot)==third.snapshot_id));
+        let unique=changes.iter().map(|c|(c.snapshot,c.path.clone())).collect::<std::collections::BTreeSet<_>>();assert_eq!(unique.len(),changes.len());
+        let latest=changes.iter().find(|c|Some(c.snapshot)==third.snapshot_id&&c.path==root.join("item")).unwrap();assert_eq!(latest.before_size,Some(14));assert_eq!(latest.after_size,Some(24));
     }
     #[test]
     fn cancellation_and_permission_gaps_preserve_the_complete_baseline() {
