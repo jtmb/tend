@@ -104,7 +104,10 @@ fn main() {
 }
 fn execute() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if matches!(args.first().map(String::as_str), Some("capabilities" | "--capabilities")) {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("capabilities" | "--capabilities")
+    ) {
         println!("{}", tend::capabilities::json("administrator"));
         return Ok(());
     }
@@ -128,6 +131,8 @@ fn execute() -> Result<(), String> {
             "memory-restore",
             "install-zram",
             "docker-logs",
+            "exclusions-save",
+            "apt-cleanup",
         ]
         .contains(&action)
         {
@@ -248,9 +253,12 @@ fn execute() -> Result<(), String> {
 fn input_json<T: serde::de::DeserializeOwned>() -> Result<T, String> {
     let mut s = String::new();
     io::stdin()
-        .take(8192)
+        .take(tend::exclusions::MAX_BYTES as u64 + 1)
         .read_to_string(&mut s)
         .map_err(|e| e.to_string())?;
+    if s.len() > tend::exclusions::MAX_BYTES {
+        return Err("Administrator request exceeds 512 KiB.".into());
+    }
     serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 fn engine_lock() -> Result<fs::File, String> {
@@ -303,6 +311,87 @@ fn workstation_action(action: &str) -> Result<(), String> {
         libc::setpriority(libc::PRIO_PROCESS, 0, 10);
     }
     match action {
+        "exclusions-save" => {
+            if !tend::exclusions::ready() {
+                return Err(
+                    "Matching exclusions integration must be installed before saving.".into(),
+                );
+            }
+            let (user, home) = caller()?;
+            let capabilities = tend::exclusions::probe(
+                "/usr/sbin/runuser",
+                &[
+                    "-u",
+                    &user,
+                    "--",
+                    "/usr/bin/env",
+                    &format!("HOME={home}"),
+                    &format!("{home}/scripts/tend-worker"),
+                    "capabilities",
+                ],
+            )
+            .ok_or("The user worker capability query failed or timed out")?;
+            if !tend::exclusions::capabilities_match(&capabilities, "worker")
+                || !tend::exclusions::binary_supports(
+                    Path::new("/usr/local/libexec/tend-worker"),
+                    "worker",
+                    0,
+                )
+            {
+                return Err("Both installed workers must support exclusions before the policy can be activated.".into());
+            }
+            let mut policy: tend::exclusions::Policy = input_json()?;
+            policy.compile()?;
+            let guard = tend::exclusions::Guard::exclusive()?;
+            if guard.compiled.policy.revision != policy.revision {
+                return Err(
+                    "Exclusions changed in another session. Reload the policy before saving."
+                        .into(),
+                );
+            }
+            policy.revision = policy
+                .revision
+                .checked_add(1)
+                .ok_or("Exclusion revision overflow")?;
+            if let Ok(previous) = fs::read_to_string(tend::exclusions::CONFIG) {
+                write_mode("/etc/tend/exclusions.previous.json", &previous, 0o644)?;
+            }
+            write_mode(
+                tend::exclusions::CONFIG,
+                &serde_json::to_string_pretty(&policy).map_err(|e| e.to_string())?,
+                0o644,
+            )?;
+            println!(
+                "Exclusions saved for manual, user cron and daily Tend cleanup. Revision {}.",
+                policy.revision
+            );
+        }
+        "apt-cleanup" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Request {
+                revision: u64,
+            }
+            let request: Request = input_json()?;
+            let guard = tend::exclusions::Guard::acquire()?;
+            if request.revision != guard.compiled.policy.revision {
+                return Err("Exclusions changed. Preview cleanup again.".into());
+            }
+            if let Some(reason) = guard
+                .compiled
+                .bulk_reason("apt", tend::exclusions::apt_root().as_deref())
+            {
+                println!("APT: {reason}");
+            } else {
+                println!(
+                    "{}",
+                    output(
+                        "/usr/bin/apt-get",
+                        &["-o", "DPkg::Lock::Timeout=0", "autoclean"]
+                    )?
+                );
+            }
+        }
         "daily-policy" => {
             let policy: tend::daily_policy::Policy = input_json()?;
             policy.validate()?;
@@ -397,9 +486,15 @@ fn workstation_action(action: &str) -> Result<(), String> {
             let c: tend::workstation::Cleanup = input_json()?;
             c.validate()?;
             let (user, home) = caller()?;
+            let exclusions = tend::exclusions::Guard::acquire()?;
             let before = tend::workstation::available();
             let mut report = String::new();
-            if c.apt {
+            if c.apt
+                && exclusions
+                    .compiled
+                    .bulk_reason("apt", tend::exclusions::apt_root().as_deref())
+                    .is_none()
+            {
                 report.push_str("APT obsolete downloads:\n");
                 report.push_str(
                     &output(
@@ -409,6 +504,14 @@ fn workstation_action(action: &str) -> Result<(), String> {
                     .map_err(|e| format!("APT cleanup failed: {e}"))?,
                 );
                 report.push('\n');
+            }
+            if c.apt {
+                if let Some(reason) = exclusions
+                    .compiled
+                    .bulk_reason("apt", tend::exclusions::apt_root().as_deref())
+                {
+                    report.push_str(&format!("APT: {reason}\n"));
+                }
             }
             let json = serde_json::to_string(&c).unwrap();
             let uid = output("/usr/bin/id", &["-u", &user])?;

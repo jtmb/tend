@@ -1,4 +1,4 @@
-# Expansion checkpoint — phases 1–3 (partial)
+# Expansion checkpoint — phases 1–4 (partial)
 
 Source branch: `codex/tend-expansion`, starting from `06a6aae`.
 The expansion remains in progress. No release, installed binary, real cleanup,
@@ -82,7 +82,7 @@ application was changed in this checkpoint.
 
 ## Remaining
 
-Final boundary/visual/resource gates for phases 1–3 and phases 4–7 in [the plan](EXPANSION_PLAN.md), including remaining storage boundary/performance checks,
+Final boundary/visual/resource gates for phases 1–4 and phases 5–7 in [the plan](EXPANSION_PLAN.md), including remaining storage boundary/performance checks,
 shared cleanup protections, maintenance/incident
 history, alerts/panel, import drafts, resource/accessibility matrix and release.
 
@@ -106,3 +106,73 @@ Phase 7 must also audit wall-clock rollback and history cursor ordering, chart
 rendering across missing samples, long labels/error detail presentation, and
 late asynchronous responses after navigation. Current native evidence exercises
 positive workflows and cancellation; it does not certify every interleaving.
+
+## Cleanup protection checkpoint
+
+- Typed previews explain eligibility and consequences, and expose every selected
+  file through a 200-row paginated native table. Execution rechecks the saved
+  inode, size, ownership and timestamps; a changed file is skipped. Relevant
+  policy edits, policy revision changes and expiry invalidate approval.
+- One shared exclusions editor is available from manual and daily cleanup.
+  Draft add/edit/remove and Discard use the shared footer. Activation is gated
+  on the installed administrator, both workers and the maintenance adapter
+  advertising explicit support. Unsupported installations permit review but
+  cannot claim active protection.
+- The root-owned policy and stable lock serialize changes against all Tend
+  cleanup paths. Missing files, invalid schemas, unsafe permissions and locking
+  failures stop cleanup. Literal paths and canonical aliases are protected.
+- Docker pruning, Empty Trash and npm verification skip while path exclusions
+  are active. APT resolves its actual configured archive directory; pip resolves
+  its explicitly selected cache. Those categories skip on overlap or unknown
+  locations. These exclusions do not replace Ubuntu's separate tmpfiles, Snap
+  or OpenCode policies.
+- Cache enumeration is bounded and reports incomplete reads instead of
+  approving a partial scan silently. Protected directories are not traversed.
+  The preview candidate budget is 16 MiB; this is a selection budget, not a
+  measured peak-RSS claim.
+- A path that later develops a symlink loop stops cleanup readers, while the
+  exclusive writer can still replace it with a valid policy. Newly submitted
+  unresolvable paths are rejected. An integration upgrade refuses to recreate a
+  missing policy when prior installation markers exist, preserving the error
+  instead of silently dropping unknown protections.
+- The integration installer preserves existing policy bytes and the lock inode
+  on upgrades, refuses replacement during active cleanup through the shared lock, checks release
+  capabilities, and refuses enforcement rollback while exclusions are active.
+  All installer trials used retained staging trees.
+- A repeat test found that an inherited descriptor can briefly retain a scan
+  lock after completion. Scan/exclusion guards now unlock explicitly. The scan
+  regression retains a duplicate descriptor to reproduce that ownership case
+  deterministically, without starting another process.
+
+### Evidence and limits
+
+- Rust: 66 library tests and one panel protocol test passed; the existing
+  opt-in fixture deletion test remains ignored.
+- Python: 42 passed, one mocked notification test skipped because the host
+  blocks mock execution. Administrator tests use a networkless mount namespace
+  with fixture-only writes and recorded package/service commands.
+- Positive isolated contracts verify policy revision conflicts, writer/reader
+  contention, obsolete-adapter rejection, APT skips, pip cache aliases,
+  protected-file survival, stale-policy rejection and replacement-file survival.
+- Native cleanup evidence:
+  `../performance/native-fixtures/tend-workflow-uccug7yg/cleanup/cleanup-evidence.json`.
+  All 206 candidates were paged; draft CRUD, validation, unsupported-save gating,
+  daily bulk-skip disclosure and model release on navigation passed. Original
+  six demo inputs remained byte-exact; no deletion/system action was invoked.
+- Existing native visual matrix:
+  `../performance/native-fixtures/tend-workflow-ngv9civk/qa/`.
+  Expansion regression:
+  `../performance/native-fixtures/tend-workflow-fylfwsyi/expansion/`.
+- Tests were moved to retained fixtures on the main disk after the real low-space
+  guard refused history writes on `/tmp`. The guard was not weakened and earlier
+  evidence was not deleted. Sandbox helpers now share immutable fixture binaries
+  instead of making a multi-MiB copy for every test.
+- Detailed logs are in `../performance/tend-expansion-phase4-*.log`; all fifteen
+  live configuration/schedule fingerprints still match the original baseline in
+  `../performance/tend-expansion-phase4-invariants.json`.
+
+This is source/test evidence, not an installed release. The installed app,
+administrator integration and running applications remain untouched. Final
+whole-app budgets, complete accessibility checks and timeout/cancellation audits
+remain required. Maintenance/incident history, alerts/panel status and settings
+bundles are the next implementation phases; the overall goal stays active.

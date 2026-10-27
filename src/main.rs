@@ -1,18 +1,20 @@
+mod cleanup_items_ui;
 mod cleanup_policy_ui;
 mod cleanup_ui;
+mod diagnostics_ui;
 #[cfg(feature = "docs-demo")]
 mod docs_demo;
 mod editor;
-mod diagnostics_ui;
+mod exclusions_ui;
 mod log_reader;
 mod maintenance_ui;
 mod monitor;
 mod panel;
 mod process_tree_ui;
 mod storage_history_ui;
-mod workspaces_ui;
 mod task_manager;
 mod workbench;
+mod workspaces_ui;
 use adw::prelude::*;
 use gtk::{glib, Orientation};
 use std::{
@@ -418,8 +420,8 @@ fn build(app: &adw::Application) {
         "caption",
     ));
     stack.add_titled(&scroll(&home), Some("overview"), "Overview");
-    let storage=workbench::add(&stack, &win);
-    workspaces_ui::add(&stack,&win,storage);
+    let storage = workbench::add(&stack, &win);
+    workspaces_ui::add(&stack, &win, storage);
     diagnostics_ui::add(&stack);
     maintenance_ui::add(&stack, &win);
     let care = page(
@@ -566,11 +568,7 @@ fn build(app: &adw::Application) {
             "Monitor",
             vec![
                 ("overview", "Overview", "view-grid-symbolic"),
-                (
-                    "task-manager",
-                    "Task Manager",
-                    "view-list-bullet-symbolic",
-                ),
+                ("task-manager", "Task Manager", "view-list-bullet-symbolic"),
                 ("system-logs", "System logs", "view-list-symbolic"),
                 ("diagnostics", "Diagnostics", "edit-find-symbolic"),
             ],
@@ -650,6 +648,11 @@ fn build(app: &adw::Application) {
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
     #[cfg(feature = "docs-demo")]
     if std::env::var_os("TEND_PERF_QA").is_some() {
+        return;
+    }
+    #[cfg(feature = "docs-demo")]
+    if let Ok(directory) = std::env::var("TEND_CLEANUP_QA") {
+        docs_demo::cleanup_qa(app, &win, &outer, &stack, &directory);
         return;
     }
     #[cfg(feature = "docs-demo")]

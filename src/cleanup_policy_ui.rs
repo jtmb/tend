@@ -5,6 +5,7 @@ use adw::prelude::*;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::Arc,
 };
 use tend::{cleanup_rules as rules, daily_policy as daily, workstation as w};
 
@@ -277,7 +278,7 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let saves = buttons(&p);
     let defaults = button(&saves, "Restore defaults");
     let revision = Rc::new(Cell::new(0u64));
-    let approved = Rc::new(RefCell::new(None::<(u64, w::Cleanup, rules::Policy)>));
+    let approved = Rc::new(RefCell::new(None::<(u64, Arc<tend::cleanup_plan::Plan>)>));
     let bar = buttons(&p);
     let preview = button(&bar, "Preview cleanup");
     let apply = button(&bar, "Clean selected…");
@@ -289,6 +290,8 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         "Preview is required. No cleanup runs when you edit or save a policy.",
     );
     exports(&p, &view);
+    let items = crate::cleanup_items_ui::Items::new();
+    p.append(&items.root);
     let invalidate: Rc<dyn Fn()> = Rc::new({
         let (revision, approved, apply, view) = (
             revision.clone(),
@@ -296,7 +299,9 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             apply.clone(),
             view.clone(),
         );
+        let items = items.clone();
         move || {
+            items.clear();
             revision.set(revision.get().wrapping_add(1));
             approved.borrow_mut().take();
             apply.set_sensitive(false);
@@ -326,6 +331,7 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             );
         }
     });
+    saves.insert(&crate::exclusions_ui::button(win, invalidate.clone()), -1);
     controls.changed(changed);
     let extra = crate::cleanup_ui::section(win, invalidate.clone());
     p.append(&extra);
@@ -361,32 +367,45 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         apply.clone(),
         view.clone(),
     );
+    let list_items = items.clone();
     preview.connect_clicked(move|button|{
         let policy=c.manual();let generation=rev.get();let (rev,plan,b,v,button)=(rev.clone(),plan.clone(),b.clone(),v.clone(),button.clone());
         plan.borrow_mut().take();b.set_sensitive(false);button.set_sensitive(false);v.buffer().set_text("Collecting a read-only preview…");
-        job(move||{let custom=rules::Policy::load()?;let report=format!("{}\n\n{}",w::cleanup_preview(&policy)?,rules::preview(&custom)?);Ok((report,policy,custom))},move|result|{
+        let list_items=list_items.clone();list_items.clear();
+        job(move||{let custom=rules::Policy::load()?;let plan=tend::cleanup_plan::Plan::build(&policy,&custom,true)?;let compatible=!plan.categories.iter().any(|c|matches!(c.action,tend::cleanup_plan::Action::Apt)&&c.skip.is_none()&&c.selected)||tend::exclusions::integration_supported();Ok((plan,compatible))},move|result|{
             button.set_sensitive(true);
             if generation!=rev.get(){report_hint(&v,"Settings changed while the preview was running. Preview again to review the current policy.");return;}
-            match result{Ok((report,policy,custom))=>{v.buffer().set_text(&report);let compatible=!policy.apt||daily::Policy::ready();if !compatible{let mut end=v.buffer().end_iter();v.buffer().insert(&mut end,"\n\nSystem helper update required for APT cleanup. Preview remains available.");}b.set_sensitive(compatible);*plan.borrow_mut()=Some((generation,policy,custom));},Err(e)=>v.buffer().set_text(&format!("Preview failed: {e}"))}
+            match result{Ok((preview,compatible))=>{v.buffer().set_text(&preview.render());if !compatible {let mut end=v.buffer().end_iter();v.buffer().insert(&mut end,"\n\nSystem helper update required for APT cleanup. Preview remains available.");}let preview=Arc::new(preview);list_items.set(preview.clone());b.set_sensitive(compatible);*plan.borrow_mut()=Some((generation,preview));},Err(e)=>v.buffer().set_text(&format!("Preview failed: {e}"))}
         });
     });
     let (parent, rev, plan, v, editor) = (win.clone(), revision, approved, view, p.clone());
     let apply_done = apply.clone();
     apply.connect_clicked(move |_|{
-        let Some((generation,policy,custom))=plan.borrow().clone()else{return};
+        let Some((generation,selection))=plan.borrow().clone()else{return};
         if generation!=rev.get(){return;}
         let (rev,plan,v,editor,apply_done)=(rev.clone(),plan.clone(),v.clone(),editor.clone(),apply_done.clone());
         confirm(&parent,"Clean the previewed items?","This permanently removes selected cache files and Trash contents. Docker checks eligibility at execution.","Clean selected",true,move||{
             if generation!=rev.get(){report_hint(&v,"Policy changed. Preview again before cleaning.");return;}
-            plan.borrow_mut().take();editor.set_sensitive(false);let (v,editor,apply_done)=(v.clone(),editor.clone(),apply_done.clone());let (policy,custom)=(policy.clone(),custom.clone());
+            plan.borrow_mut().take();editor.set_sensitive(false);let (v,editor,apply_done)=(v.clone(),editor.clone(),apply_done.clone());let selection=selection.clone();
             job(move||{
                 let _lock=rules::cleanup_lock()?;
                 // Folder rules saved by another instance must also invalidate this preview.
-                if serde_json::to_value(rules::Policy::load()?).map_err(|e|e.to_string())?!=serde_json::to_value(&custom).map_err(|e|e.to_string())?{return Err("Folder rules changed. Preview again.".into());}
-                let base=if policy.apt {if !daily::Policy::ready(){return Err("System helper update required.".into());}crate::privileged("cleanup",Some(serde_json::to_string(&policy).unwrap()))?}else{w::cleanup_user(&policy)?};
-                match rules::apply(&custom){Ok(extra)=>Ok(format!("{base}\n{extra}")),Err(e)=>Err(format!("{base}\nFolder-rule cleanup failed:\n{e}"))}
+                if serde_json::to_value(rules::Policy::load()?).map_err(|e|e.to_string())?!=serde_json::to_value(&selection.custom).map_err(|e|e.to_string())?{return Err("Folder rules changed. Preview again.".into());}
+                let guard=tend::exclusions::Guard::acquire()?;selection.valid_for(&guard.compiled.policy)?;
+                let mut report=String::new();
+                if selection.cleanup.apt&&selection.categories.iter().any(|c|matches!(c.action,tend::cleanup_plan::Action::Apt)&&c.skip.is_none()) {
+                    if !tend::exclusions::integration_supported() {return Err("System helper update required.".into())}
+                    report=crate::privileged("apt-cleanup",Some(serde_json::json!({"revision":selection.exclusions.revision}).to_string()))?;
+                }
+                match selection.execute_user() {Ok(text)=>Ok(format!("{report}\n{text}")),Err(error)=>Err(format!("{report}\n{error}"))}
             },move|result|{editor.set_sensitive(true);apply_done.set_sensitive(false);v.buffer().set_text(&result.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}")));});
         });
+    });
+    let leave = invalidate.clone();
+    stack.connect_visible_child_name_notify(move |s| {
+        if s.visible_child_name().as_deref() != Some("cleanup") {
+            leave();
+        }
     });
     stack.add_titled(&editor::shell(&p, &footer), Some("cleanup"), "Disk cleanup");
 }
@@ -425,6 +444,7 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let bar = buttons(&p);
     let defaults = button(&bar, "Restore defaults");
     let preview = button(&bar, "Preview daily policy");
+    let revision = Rc::new(Cell::new(0u64));
     let managed = adw::PreferencesGroup::builder()
         .description("Existing system services retain ownership of these policies.")
         .build();
@@ -454,13 +474,23 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         &view,
         "Preview lists the exact policy actions. It never runs pruning, updates or maintenance.",
     );
+    let invalidate: Rc<dyn Fn()> = Rc::new({
+        let (revision, view) = (revision.clone(), view.clone());
+        move || {
+            revision.set(revision.get().wrapping_add(1));
+            report_hint(&view,"Preview this draft to review its current actions. No maintenance runs from a preview.");
+        }
+    });
+    bar.insert(&crate::exclusions_ui::button(win, invalidate.clone()), -1);
     let (c, s, out, preview_view) = (
         controls.clone(),
         saved.clone(),
         footer.clone(),
         view.clone(),
     );
+    let changed = invalidate.clone();
     controls.changed(Rc::new(move || {
+        changed();
         report_hint(
             &preview_view,
             "Preview this draft to review its current actions. No maintenance runs from a preview.",
@@ -479,8 +509,23 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     });
     let c = controls.clone();
     defaults.connect_clicked(move |_| c.set_daily(&daily::Policy::default()));
-    let (c, v) = (controls.clone(), view.clone());
-    preview.connect_clicked(move |_| v.buffer().set_text(&c.daily().plan().unwrap_or_else(|e| e)));
+    let (c, v, rev) = (controls.clone(), view.clone(), revision);
+    preview.connect_clicked(move |button| {
+        let (policy, generation) = (c.daily(), rev.get());
+        let (v, rev, button) = (v.clone(), rev.clone(), button.clone());
+        button.set_sensitive(false);
+        v.buffer().set_text("Checking policy and protected paths…");
+        job(
+            move || policy.plan(),
+            move |result| {
+                button.set_sensitive(true);
+                if rev.get() == generation {
+                    v.buffer()
+                        .set_text(&result.unwrap_or_else(|e| format!("Preview unavailable: {e}")));
+                }
+            },
+        );
+    });
     let (parent, out, editor) = (win.clone(), footer.clone(), p.clone());
     save.connect_clicked(move |_| {
         let policy = controls.daily();

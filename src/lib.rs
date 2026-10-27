@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+pub mod cleanup_plan;
 pub mod diagnostics;
+pub mod exclusions;
 pub mod workspaces;
 use std::{fs, process::Command};
 pub const CONFIG: &str = "/etc/tend/settings.json";
@@ -76,7 +78,10 @@ mod tests {
     fn command_failures_never_return_an_empty_error() {
         let error = output("/usr/bin/false", &[]).unwrap_err();
         assert!(error.contains("/usr/bin/false") && error.contains("status"));
-        assert_eq!(output("/bin/sh", &["-c", "printf 'fixture diagnostic'; exit 1"]).unwrap_err(), "fixture diagnostic");
+        assert_eq!(
+            output("/bin/sh", &["-c", "printf 'fixture diagnostic'; exit 1"]).unwrap_err(),
+            "fixture diagnostic"
+        );
     }
     #[test]
     fn midnight_warnings_wrap() {
@@ -116,9 +121,9 @@ pub mod workstation;
 
 pub mod presentation;
 
-pub mod daily_policy;
-pub mod observations;
-pub mod sampler;
-pub mod history;
 pub mod capabilities;
+pub mod daily_policy;
+pub mod history;
+pub mod observations;
 pub mod process_groups;
+pub mod sampler;

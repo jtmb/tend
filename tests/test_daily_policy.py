@@ -7,7 +7,7 @@ import types
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,6 +22,11 @@ installer = load('policy_installer', ROOT / 'scripts/install-policy.py')
 
 class DailyPolicyTests(unittest.TestCase):
     def setUp(self):
+        Path('/tmp/opencode').mkdir(exist_ok=True)
+        fixture=Path(tempfile.mkdtemp(prefix='tend-daily-contract-',dir='/tmp/opencode'))
+        overrides=patch.multiple(policy,EXCLUSIONS=fixture/'exclusions.json',EXCLUSION_LOCK=fixture/'exclusions.lock',
+                                  EXCLUSION_READY=fixture/'exclusions-ready',EXCLUSION_OWNER=os.geteuid())
+        overrides.start();self.addCleanup(overrides.stop)
         self.run = Mock(return_value=(0, 'mocked command'))
         self.user = lambda command: ['AS-USER', *command]
         self.apt = Mock(return_value=False)

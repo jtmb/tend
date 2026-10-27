@@ -12,11 +12,12 @@ import subprocess
 import resource
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion'])
+parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup'])
+parser.add_argument('--parent',type=Path,default=Path('/tmp/opencode'),help='Retained fixture directory; history tests require at least 2 GiB free')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 os.chdir(repo)
-root = Path(subprocess.check_output(['python3','docs/demo/prepare.py'],text=True).strip())
+root = Path(subprocess.check_output(['python3','docs/demo/prepare.py','--parent',str(args.parent.expanduser().resolve())],text=True).strip())
 env = dict(os.environ, GDK_BACKEND='x11', GSK_RENDERER='cairo', GTK_A11Y='none',
            GSETTINGS_BACKEND='memory', GIO_USE_VFS='local',
            XDG_CONFIG_HOME=str(root/'home/.config'), XDG_CACHE_HOME=str(root/'cache'),
@@ -50,6 +51,9 @@ if args.mode == 'matrix':
 elif args.mode == 'expansion':
     run('expansion',['target/debug/tend'],{'TEND_EXPANSION_QA':str(root/'expansion')},screen='1600x1000x24')
     print((root/'expansion/expansion-evidence.json').read_text(),flush=True)
+elif args.mode == 'cleanup':
+    run('cleanup',['target/debug/tend'],{'TEND_CLEANUP_QA':str(root/'cleanup')},screen='1600x1000x24')
+    print((root/'cleanup/cleanup-evidence.json').read_text(),flush=True)
 elif args.mode == 'accessibility':
     for variant, settings in [('scale-200',{'GDK_SCALE':'2'}),('large-text',{'TEND_QA_TEXT_SCALE':'1.35'}),('high-contrast',{'ADW_DEBUG_HIGH_CONTRAST':'1'})]:
         for theme in [1,2]:

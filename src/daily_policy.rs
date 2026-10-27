@@ -97,18 +97,43 @@ impl Policy {
     }
     pub fn plan(&self) -> Result<String, String> {
         self.validate()?;
+        let guard = crate::exclusions::Guard::acquire()?;
+        let apt_root = if self.apt && guard.compiled.policy.active() {
+            crate::exclusions::apt_root()
+        } else {
+            None
+        };
+        self.plan_with(&guard.compiled, apt_root.as_deref())
+    }
+    fn plan_with(
+        &self,
+        protected: &crate::exclusions::Compiled,
+        apt_root: Option<&std::path::Path>,
+    ) -> Result<String, String> {
+        self.validate()?;
         let mut s = String::from("Daily cleanup actions — review only\n\n");
-        let mut add = |on: bool, title: &str, cmd: String| {
+        let mut add = |on: bool, title: &str, cmd: String, skip: Option<String>| {
             s.push_str(&format!(
                 "{} · {title}\n{}\n\n",
-                if on { "Enabled" } else { "Disabled" },
-                if on { cmd } else { "Skipped by policy".into() }
+                if !on {
+                    "Disabled"
+                } else if skip.is_some() {
+                    "Protected"
+                } else {
+                    "Enabled"
+                },
+                if !on {
+                    "Skipped by policy".into()
+                } else {
+                    skip.unwrap_or(cmd)
+                }
             ));
         };
         add(
             self.apt,
             "Obsolete APT downloads",
             "apt-get autoclean".into(),
+            protected.bulk_reason("apt", apt_root),
         );
         add(
             self.docker_build,
@@ -118,6 +143,7 @@ impl Policy {
                 self.build_days * 24,
                 self.keep_gb
             ),
+            protected.bulk_reason("docker", None),
         );
         add(
             self.docker_images,
@@ -126,14 +152,16 @@ impl Policy {
                 "docker image prune --force --filter until={}h",
                 self.image_days * 24
             ),
+            protected.bulk_reason("docker", None),
         );
         add(
             self.npm_logs,
             "npm diagnostic logs",
             format!(
-                "Regular *.log files older than {} days in ~/.npm/_logs",
+                "Regular *.log files older than {} days in ~/.npm/_logs; protected paths are omitted",
                 self.npm_log_days
             ),
+            protected.protects(&crate::workstation::home().join(".npm/_logs")).then(|| "The npm log folder is protected; category skipped.".into()),
         );
         add(
             self.npm_verify,
@@ -142,6 +170,7 @@ impl Policy {
                 "npm cache verify · at most once every {} days",
                 self.npm_verify_days
             ),
+            protected.bulk_reason("npm-verify", None),
         );
         s.push_str("Containers, tagged images, networks and volumes are preserved.\nManual/cron folder rules are separate. Ubuntu owns temporary-file and journal cleanup.\nThis policy does not change updates, timer schedules, login or restart behavior.");
         Ok(s)
@@ -181,6 +210,36 @@ mod tests {
         let s = p.plan().unwrap();
         assert!(s.contains("Disabled · Unused Docker build cache\nSkipped by policy"));
         assert!(!s.contains("docker builder prune"));
+    }
+    #[test]
+    fn explained_daily_preview_discloses_global_bulk_skips() {
+        let protected = crate::exclusions::Policy {
+            paths: vec![crate::exclusions::Entry {
+                path: "/".into(),
+                enabled: true,
+                note: "Everything".into(),
+            }],
+            ..Default::default()
+        }
+        .compile()
+        .unwrap();
+        let report = Policy::default()
+            .plan_with(
+                &protected,
+                Some(std::path::Path::new("/var/cache/apt/archives")),
+            )
+            .unwrap();
+        for title in [
+            "Obsolete APT downloads",
+            "Unused Docker build cache",
+            "Dangling Docker images",
+            "npm cache verification",
+        ] {
+            assert!(report.contains(&format!("Protected · {title}")), "{report}");
+        }
+        assert!(report.contains("npm log folder is protected"));
+        assert!(!report.contains("docker builder prune"));
+        assert!(!report.contains("apt-get autoclean"));
     }
 }
 

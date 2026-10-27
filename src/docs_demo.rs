@@ -661,7 +661,8 @@ pub fn qa(
                     .filter_map(|w| w.downcast_ref::<gtk::SpinButton>().cloned())
                     .collect::<Vec<_>>();
                 fields[2].set_value(12.);
-                button(&daily, "Preview daily policy").emit_clicked();
+                let preview=button(&daily, "Preview daily policy");preview.emit_clicked();
+                assert!(wait_until(||preview.is_sensitive(),Duration::from_secs(12)));
                 assert!(text(&daily).contains("12GB"));
                 assert_eq!(tend::workstation::Cleanup::load().unwrap().keep_gb, 5);
                 evidence.push(json!({"independent_policies":true}));
@@ -1775,6 +1776,227 @@ pub fn validate_capture(outer: &gtk::Box, stack: &gtk::Stack, path: &str) {
 
 /// Phase-specific real-widget regression checks. Runs in a retained fixture and
 /// exits only this NON_UNIQUE preview, never the installed/running application.
+pub fn cleanup_qa(
+    app: &adw::Application,
+    win: &adw::ApplicationWindow,
+    outer: &gtk::Box,
+    stack: &gtk::Stack,
+    directory: &str,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    assert!(std::env::var_os("TEND_DEMO_DIR").is_some());
+    let directory = std::path::PathBuf::from(directory);
+    fs::create_dir_all(&directory).unwrap();
+    let (app, win, outer, stack) = (app.clone(), win.clone(), outer.clone(), stack.clone());
+    stack.set_transition_type(gtk::StackTransitionType::None);
+    glib::timeout_add_local_once(Duration::from_millis(700), move || {
+        let home = tend::workstation::home();
+        let config = home.join(".config/tend");
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        let exclusions = tend::exclusions::Policy {
+            paths: vec![tend::exclusions::Entry {
+                path: home.join("sample-cache/old-shader.cache"),
+                enabled: true,
+                note: "Keep shader".into(),
+            }],
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec_pretty(&exclusions).unwrap();
+        fs::write(config.join("exclusions.json"), &bytes).unwrap();
+        fs::write(config.join("exclusions.lock"), "").unwrap();
+        for name in ["exclusions.json", "exclusions.lock"] {
+            fs::set_permissions(config.join(name), fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let cleanup = page(&stack, "cleanup");
+        stack.set_visible_child_name("cleanup");
+        let preview = button(&cleanup, "Preview cleanup");
+        preview.emit_clicked();
+        assert!(wait_until(
+            || preview.is_sensitive(),
+            Duration::from_secs(12)
+        ));
+        let report = text(&cleanup);
+        assert!(
+            report.contains("Why:") && report.contains("Effect:"),
+            "{report}"
+        );
+        let table = descendants(&cleanup)
+            .into_iter()
+            .find_map(|w| w.downcast::<gtk::ColumnView>().ok())
+            .unwrap();
+        let model = table.model().unwrap();
+        assert_eq!(model.n_items(), 1, "{report}");
+        model.select_item(0, true);
+        assert!(text(&cleanup).contains("old-download.cache"));
+        assert!(button(&cleanup, "Clean selected…").is_sensitive());
+        // Additional retained fixture entries exercise every preview page.
+        let old = std::time::SystemTime::now() - Duration::from_secs(30 * 86400);
+        for i in 0..205 {
+            let path = home.join(format!("sample-cache/paging-{i:03}.cache"));
+            fs::write(&path, b"fixture").unwrap();
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
+        preview.emit_clicked();
+        assert!(wait_until(
+            || preview.is_sensitive(),
+            Duration::from_secs(12)
+        ));
+        assert_eq!(model.n_items(), 200);
+        button(&cleanup, "Next files").emit_clicked();
+        assert_eq!(model.n_items(), 6);
+        assert!(text(&cleanup).contains("Select a file to review"));
+        button(&cleanup, "Previous files").emit_clicked();
+        assert_eq!(model.n_items(), 200);
+        let manage = button(&cleanup, "Manage exclusions…");
+        manage.emit_clicked();
+        assert!(wait_until(
+            || manage.is_sensitive(),
+            Duration::from_secs(12)
+        ));
+        let window = gtk::Window::list_toplevels()
+            .into_iter()
+            .find_map(|w| {
+                w.downcast::<adw::Window>().ok().filter(|w| {
+                    w.is_visible() && w.title().as_deref() == Some("Cleanup exclusions")
+                })
+            })
+            .unwrap();
+        assert!(!button(&window, "Save exclusions").is_sensitive());
+        button(&window, "Add protected path…").emit_clicked();
+        let dialog = gtk::Window::list_toplevels()
+            .into_iter()
+            .find_map(|w| {
+                w.downcast::<adw::MessageDialog>()
+                    .ok()
+                    .filter(|w| w.is_visible())
+            })
+            .unwrap();
+        let path = descendants(&dialog)
+            .into_iter()
+            .find_map(|w| {
+                w.downcast::<gtk::Entry>()
+                    .ok()
+                    .filter(|w| w.placeholder_text().as_deref() == Some("Absolute protected path"))
+            })
+            .unwrap();
+        path.set_text("relative");
+        assert!(!dialog.is_response_enabled("save"));
+        path.set_text(&home.join("keep-new").to_string_lossy());
+        assert!(dialog.is_response_enabled("save"));
+        button(&dialog, "Keep in draft").emit_clicked();
+        wait_main_context(Duration::from_millis(100));
+        let list = descendants(&window)
+            .into_iter()
+            .find_map(|w| {
+                w.downcast::<gtk::ListBox>()
+                    .ok()
+                    .filter(|l| l.has_css_class("boxed-list"))
+            })
+            .unwrap();
+        let rows = |list: &gtk::ListBox| {
+            (0..65)
+                .take_while(|i| list.row_at_index(*i).is_some())
+                .count()
+        };
+        assert_eq!(rows(&list), 2);
+        list.select_row(list.row_at_index(1).as_ref());
+        button(&window, "Edit protected path…").emit_clicked();
+        let edit = gtk::Window::list_toplevels()
+            .into_iter()
+            .find_map(|w| {
+                w.downcast::<adw::MessageDialog>()
+                    .ok()
+                    .filter(|w| w.is_visible())
+            })
+            .unwrap();
+        let note = descendants(&edit)
+            .into_iter()
+            .find_map(|w| {
+                w.downcast::<gtk::Entry>()
+                    .ok()
+                    .filter(|e| e.placeholder_text().as_deref() == Some("Optional label"))
+            })
+            .unwrap();
+        note.set_text("Retained draft");
+        button(&edit, "Keep in draft").emit_clicked();
+        wait_main_context(Duration::from_millis(100));
+        assert!(text(&window).contains("Retained draft"));
+        list.select_row(list.row_at_index(1).as_ref());
+        button(&window, "Remove protected path").emit_clicked();
+        assert_eq!(rows(&list), 1);
+        list.select_row(list.row_at_index(0).as_ref());
+        button(&window, "Remove protected path").emit_clicked();
+        assert_eq!(rows(&list), 0);
+        button(&window, "Discard changes").emit_clicked();
+        assert_eq!(rows(&list), 1);
+        assert_eq!(fs::read(config.join("exclusions.json")).unwrap(), bytes);
+        let paint = gtk::WidgetPaintable::new(Some(&window));
+        wait_main_context(Duration::from_millis(200));
+        let snapshot = gtk::Snapshot::new();
+        paint.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+        window
+            .renderer()
+            .unwrap()
+            .render_texture(&snapshot.to_node().unwrap(), None)
+            .save_to_png(directory.join("exclusions.png"))
+            .unwrap();
+        window.close();
+        drop(window);
+        drop(dialog);
+        drop(edit);
+        drop(path);
+        drop(note);
+        drop(list);
+        stack.set_visible_child_name("daily-cleanup");
+        let daily = page(&stack, "daily-cleanup");
+        assert!(button(&daily, "Manage exclusions…").is_sensitive());
+        let daily_preview = button(&daily, "Preview daily policy");
+        daily_preview.emit_clicked();
+        assert!(wait_until(
+            || daily_preview.is_sensitive(),
+            Duration::from_secs(12)
+        ));
+        assert!(
+            text(&daily).contains("Protected · Unused Docker build cache"),
+            "{}",
+            text(&daily)
+        );
+        stack.set_visible_child_name("cleanup");
+        assert!(!button(&cleanup, "Clean selected…").is_sensitive());
+        assert_eq!(model.n_items(), 0);
+        preview.emit_clicked();
+        assert!(wait_until(
+            || preview.is_sensitive(),
+            Duration::from_secs(12)
+        ));
+        for width in [720, 1100] {
+            win.set_default_size(width, 820);
+            wait_main_context(Duration::from_millis(200));
+            let paint = gtk::WidgetPaintable::new(Some(&outer));
+            let snapshot = gtk::Snapshot::new();
+            paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
+            win.renderer()
+                .unwrap()
+                .render_texture(&snapshot.to_node().unwrap(), None)
+                .save_to_png(directory.join(format!("cleanup-{width}.png")))
+                .unwrap();
+        }
+        fs::write(directory.join("cleanup-evidence.json"),serde_json::to_vec_pretty(&json!({
+            "real_preview_filters_protected_file":true,"why_and_effect_details":true,"all_206_candidates_paged":true,
+            "draft_add_edit_remove_discard":true,"invalid_path_rejected":true,"unsupported_save_disabled":true,
+            "daily_preview_discloses_bulk_skips":true,"leaving_page_releases_selection":true,
+            "policy_bytes_preserved":fs::read(config.join("exclusions.json")).unwrap()==bytes,
+            "deletion_actions_invoked":false,"system_actions_invoked":false
+        })).unwrap()).unwrap();
+        app.activate_action("quit", None);
+    });
+}
+
 pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::Box,stack:&gtk::Stack,directory:&str) {
     assert!(std::env::var_os("TEND_DEMO_DIR").is_some());
     let directory=std::path::PathBuf::from(directory);fs::create_dir_all(&directory).unwrap();

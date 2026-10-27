@@ -177,7 +177,16 @@ fn filesystem_identity(dir: &File, dev: u64) -> Result<String, String> {
         fsid.iter().map(|b| format!("{b:02x}")).collect::<String>()
     ))
 }
-fn lock(store: &History) -> Result<File, String> {
+struct ScanLock(File);
+impl Drop for ScanLock {
+    fn drop(&mut self) {
+        // A concurrent command launch may briefly inherit the descriptor before
+        // exec closes it. Release explicitly, rather than waiting for every
+        // inherited copy to close after this scan has already finished.
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+fn lock(store: &History) -> Result<ScanLock, String> {
     let path = store.path.with_file_name("scan.lock");
     let file = OpenOptions::new()
         .read(true)
@@ -195,7 +204,7 @@ fn lock(store: &History) -> Result<File, String> {
     file.try_lock_exclusive().map_err(|_| {
         "Another storage-history scan is running. Wait or cancel it first.".to_string()
     })?;
-    Ok(file)
+    Ok(ScanLock(file))
 }
 
 struct Writer<'a> {
@@ -937,6 +946,16 @@ mod tests {
             Arc::new(AtomicU64::new(0)),
         )
         .unwrap()
+    }
+    #[test]
+    fn finished_scan_releases_lock_with_an_inherited_descriptor_still_open() {
+        let (store,_root)=fixture();let held=lock(&store).unwrap();
+        // dup and fork retain the same open-file description. A retained dup
+        // reproduces the ownership issue without starting another process.
+        let inherited=held.0.try_clone().unwrap();
+        drop(held);
+        assert!(lock(&store).is_ok());
+        drop(inherited);
     }
     #[test]
     fn complete_snapshots_retain_lossless_names_hardlinks_and_change_history() {

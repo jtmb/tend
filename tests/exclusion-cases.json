@@ -1,0 +1,16 @@
+[
+  {"name":"default","policy":{},"valid":true},
+  {"name":"root protection","policy":{"paths":[{"path":"/","enabled":true,"note":"Keep all"}]},"valid":true},
+  {"name":"unicode note","policy":{"paths":[{"path":"/tmp/project","enabled":false,"note":"Développement"}]},"valid":true},
+  {"name":"unknown setting","policy":{"restart":true},"valid":false},
+  {"name":"wrong version","policy":{"version":2},"valid":false},
+  {"name":"boolean version","policy":{"version":true},"valid":false},
+  {"name":"negative revision","policy":{"revision":-1},"valid":false},
+  {"name":"boolean revision","policy":{"revision":false},"valid":false},
+  {"name":"missing entry field","policy":{"paths":[{"path":"/tmp","enabled":true}]},"valid":false},
+  {"name":"extra entry field","policy":{"paths":[{"path":"/tmp","enabled":true,"note":"","command":"anything"}]},"valid":false},
+  {"name":"relative path","policy":{"paths":[{"path":"relative","enabled":false,"note":""}]},"valid":false},
+  {"name":"parent traversal","policy":{"paths":[{"path":"/tmp/../home","enabled":true,"note":""}]},"valid":false},
+  {"name":"C1 control","policy":{"paths":[{"path":"/tmp","enabled":true,"note":"a\u0085b"}]},"valid":false},
+  {"name":"duplicate normalized path","policy":{"paths":[{"path":"/tmp/keep","enabled":true,"note":""},{"path":"/tmp/keep/.","enabled":false,"note":""}]},"valid":false}
+]

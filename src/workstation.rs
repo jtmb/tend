@@ -358,35 +358,68 @@ fn cache() -> PathBuf {
     home().join(".cache")
 }
 
-fn old_files(root: &Path, days: u32) -> Vec<PathBuf> {
-    if root.canonicalize().map(|p| p != root).unwrap_or(true) {
-        return vec![];
+pub(crate) fn old_files(
+    root: &Path,
+    days: u32,
+    exclusions: &crate::exclusions::Compiled,
+) -> Result<Vec<PathBuf>, String> {
+    use std::os::unix::ffi::OsStrExt;
+    match root.canonicalize() {
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(format!("Cannot inspect cleanup folder {}: {e}",root.display())),
+        Ok(path) if path!=root => return Err(format!("Cleanup folder {} contains a symbolic link; review its actual location before cleaning.",root.display())),
+        Ok(_) => {}
     }
     let mut files = vec![];
     let mut todo = vec![root.to_owned()];
+    let weight = |p: &Path| p.as_os_str().as_bytes().len() + std::mem::size_of::<PathBuf>() + 32;
+    let mut pending = weight(root);
+    let mut selected = 0usize;
+    let mut visited = 0usize;
     let cutoff = now().saturating_sub(days as u64 * 86400);
-    let dev = fs::symlink_metadata(root).map(|m| m.dev()).unwrap_or(0);
+    let dev = fs::symlink_metadata(root).map_err(|e| e.to_string())?.dev();
     while let Some(p) = todo.pop() {
-        let Ok(m) = fs::symlink_metadata(&p) else {
-            continue;
-        };
+        pending = pending.saturating_sub(weight(&p));
+        visited += 1;
+        if visited > 250_000 {
+            return Err(
+                "Cleanup preview exceeded 250,000 entries. Choose a smaller folder.".into(),
+            );
+        }
+        let m = fs::symlink_metadata(&p).map_err(|e| {
+            format!(
+                "Cleanup preview is incomplete at {}: {e}. Nothing was selected for deletion.",
+                p.display()
+            )
+        })?;
         if m.file_type().is_symlink() || m.dev() != dev {
             continue;
         }
         if m.is_dir() {
-            if let Ok(es) = fs::read_dir(p) {
-                todo.extend(es.filter_map(Result::ok).map(|e| e.path()));
+            if exclusions.protects(&p) {
+                continue;
+            }
+            for entry in fs::read_dir(&p)
+                .map_err(|e| format!("Cannot read cleanup folder {}: {e}", p.display()))?
+            {
+                let path = entry.map_err(|e| e.to_string())?.path();
+                pending = pending.saturating_add(weight(&path));
+                if pending + selected > 16 * 1024 * 1024 || todo.len() + files.len() > 250_000 {
+                    return Err("Cleanup enumeration exceeds its bounded preview size. Choose a smaller folder.".into());
+                }
+                todo.push(path);
             }
         } else if m.is_file() && m.mtime() >= 0 && (m.mtime() as u64) < cutoff {
+            selected = selected.saturating_add(weight(&p));
+            if selected + pending > 16 * 1024 * 1024 {
+                return Err("Cleanup enumeration exceeds its bounded preview size. Choose a smaller folder.".into());
+            }
             files.push(p);
         }
-        if files.len() + todo.len() > 250_000 {
-            break;
-        }
     }
-    files
+    Ok(files)
 }
-fn cache_roots(c: &Cleanup) -> Vec<(&'static str, PathBuf, u32)> {
+pub(crate) fn cache_roots(c: &Cleanup) -> Vec<(&'static str, PathBuf, u32)> {
     let mut r = vec![];
     if c.npm_logs {
         r.push((
@@ -404,63 +437,45 @@ fn cache_roots(c: &Cleanup) -> Vec<(&'static str, PathBuf, u32)> {
     }
     r
 }
+#[cfg(test)]
+mod enumeration_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink,PermissionsExt};
+    #[test]
+    fn unreadable_folders_fail_preview_but_protected_subtrees_are_not_read() {
+        let root=PathBuf::from("/tmp/opencode").join(format!("tend-enumeration-{}-{}",std::process::id(),artifact_id()));
+        fs::create_dir_all(&root).unwrap();
+        let hidden=root.join("hidden");fs::create_dir(&hidden).unwrap();
+        fs::write(root.join("fresh"),b"fixture").unwrap();fs::write(hidden.join("keep"),b"fixture").unwrap();
+        fs::set_permissions(&hidden,fs::Permissions::from_mode(0)).unwrap();
+        let empty=crate::exclusions::Policy::default().compile().unwrap();
+        assert!(old_files(&root,1,&empty).is_err());
+        let excluded=crate::exclusions::Policy {paths:vec![crate::exclusions::Entry {path:hidden.clone(),enabled:true,note:String::new()}],..Default::default()}.compile().unwrap();
+        assert!(old_files(&root,1,&excluded).unwrap().is_empty());
+        fs::set_permissions(&hidden,fs::Permissions::from_mode(0o700)).unwrap();
+        let alias=root.with_extension("alias");symlink(&root,&alias).unwrap();
+        assert!(old_files(&alias,1,&empty).is_err());
+        assert!(old_files(&root.join("missing"),1,&empty).unwrap().is_empty());
+        assert!(hidden.join("keep").exists());
+    }
+}
 pub fn cleanup_preview(c: &Cleanup) -> Result<String, String> {
-    c.validate()?;
-    let mut s = format!(
-        "Cleanup preview • {} days • Docker allowance {} GB\n\n",
-        c.age_days, c.keep_gb
-    );
-    if c.apt {
-        s.push_str(&format!(
-            "Obsolete APT downloads (simulation):\n{}\n\n",
-            command("/usr/bin/apt-get", &["--simulate", "autoclean"])
-        ));
-    }
-    if c.docker_build || c.docker_images {
-        s.push_str(&format!(
-            "Docker inventory (usage is not a deletion estimate):\n{}\n\n",
-            command("/usr/bin/docker", &["system", "df"])
-        ));
-        s.push_str(&format!("Selected: {}{}\nBuild-cache age: {} days · dangling-image creation age: {} days. Docker decides eligibility at execution. Containers, volumes and tagged images are preserved.\n\n",if c.docker_build{"build cache "}else{""},if c.docker_images{"dangling images"}else{""},c.age_days,c.image_days()));
-    }
-    for (title, root, age) in cache_roots(c) {
-        let files = old_files(&root, age);
-        let total: u64 = files
-            .iter()
-            .filter_map(|p| fs::symlink_metadata(p).ok())
-            .map(|m| m.blocks() * 512)
-            .sum();
-        s.push_str(&format!(
-            "{title}: {} files, {}, older than {age} days\n",
-            files.len(),
-            bytes(total)
-        ));
-    }
-    if c.pip {
-        s.push_str(&format!(
-            "\nPip download/wheel cache (all entries selected):\n{}\n",
-            command(
-                "/usr/bin/python3",
-                &[
-                    "-m",
-                    "pip",
-                    "--cache-dir",
-                    &cache().join("pip").to_string_lossy(),
-                    "cache",
-                    "info"
-                ]
-            )
-        ));
-    }
-    if c.trash {
-        s.push_str("\nTrash: all items in the desktop Trash will be permanently deleted, including other mounted volumes supported by GIO.\n");
-        s.push_str(&command("/usr/bin/gio", &["trash", "--list"]));
-    }
-    s.push_str("\nDeletion cannot be undone. Cached packages may need downloading again. No project directories or installed dependencies are selected.");
-    Ok(s)
+    crate::cleanup_plan::Plan::build(c, &crate::cleanup_rules::Policy::default(), true)
+        .map(|p| p.render())
 }
 // Directory descriptors prevent following a parent that is swapped to a symlink.
+#[cfg(test)]
 pub(crate) fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<bool, String> {
+    let exclusions = crate::exclusions::Guard::acquire()?;
+    remove_old_file_guarded(root, path, days, &exclusions.compiled, None)
+}
+pub(crate) fn remove_old_file_guarded(
+    root: &Path,
+    path: &Path,
+    days: u32,
+    exclusions: &crate::exclusions::Compiled,
+    expected: Option<&crate::cleanup_plan::Stamp>,
+) -> Result<bool, String> {
     use std::{
         ffi::CString,
         os::{
@@ -468,6 +483,9 @@ pub(crate) fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<boo
             unix::ffi::OsStrExt,
         },
     };
+    if exclusions.protects(path) {
+        return Ok(false);
+    }
     if root.canonicalize().map(|p| p != root).unwrap_or(true) {
         return Err("Cache root contains a symbolic link or is unavailable".into());
     }
@@ -521,6 +539,11 @@ pub(crate) fn remove_old_file(root: &Path, path: &Path, days: u32) -> Result<boo
         return Err(std::io::Error::last_os_error().to_string());
     }
     let info = unsafe { info.assume_init() };
+    if expected.is_some_and(|stamp| !stamp.matches(&info))
+        || info.st_uid != unsafe { libc::geteuid() }
+    {
+        return Ok(false);
+    }
     if info.st_mode & libc::S_IFMT != libc::S_IFREG
         || info.st_dev != dev
         || info.st_mtime < 0
@@ -567,17 +590,28 @@ pub fn daily_npm_logs(days: u32) -> Result<String, String> {
         return Err("Invalid user log cleanup request".into());
     }
     let root = home().join(".npm/_logs");
+    let exclusions = crate::exclusions::Guard::acquire()?;
+    if exclusions.compiled.protects(&root) {
+        return Ok("Skipped by exclusions: npm diagnostic log folder is protected".into());
+    }
     let mut count = 0;
+    let mut protected = 0;
     let mut errors = vec![];
     for path in daily_log_candidates(&root, days)? {
-        match remove_old_file(&root, &path, days) {
+        if exclusions.compiled.protects(&path) {
+            protected += 1;
+            continue;
+        }
+        match remove_old_file_guarded(&root, &path, days, &exclusions.compiled, None) {
             Ok(true) => count += 1,
             Ok(false) => {}
             Err(e) => errors.push(e),
         }
     }
     if errors.is_empty() {
-        Ok(format!("npm diagnostic logs: removed {count} expired logs"))
+        Ok(format!(
+            "npm diagnostic logs: removed {count} expired logs; {protected} protected logs skipped"
+        ))
     } else {
         Err(format!(
             "npm logs: removed {count}; failures: {}",
@@ -586,77 +620,8 @@ pub fn daily_npm_logs(days: u32) -> Result<String, String> {
     }
 }
 pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
-    #[cfg(feature = "docs-demo")]
-    if std::env::var_os("TEND_DEMO_DIR").is_some() {
-        return Err("Deletion is disabled in documentation recordings.".into());
-    }
-    c.validate()?;
-    if output("/usr/bin/id", &["-u"])? == "0" {
-        return Err("User cleanup cannot run as root".into());
-    }
-    let failed = std::cell::Cell::new(false);
-    let run_cleanup = |p: &str, args: &[&str]| match crate::output(p, args) {
-        Ok(s) => s,
-        Err(e) => {
-            failed.set(true);
-            format!("Failed: {e}")
-        }
-    };
-    let before = available();
-    let mut log = String::new();
-    for (title, args) in c.docker_commands() {
-        let refs: Vec<_> = args.iter().map(String::as_str).collect();
-        log.push_str(&format!(
-            "{title}:\n{}\n",
-            run_cleanup("/usr/bin/docker", &refs)
-        ));
-    }
-    for (title, root, days) in cache_roots(c) {
-        let mut count = 0;
-        let mut failures = 0;
-        for p in old_files(&root, days) {
-            match remove_old_file(&root, &p, days) {
-                Ok(true) => count += 1,
-                Ok(false) => {}
-                Err(_) => failures += 1,
-            }
-        }
-        if failures > 0 {
-            failed.set(true);
-        }
-        log.push_str(&format!(
-            "{title}: removed {count} files; {failures} failures\n"
-        ));
-    }
-    if c.pip {
-        log.push_str(&format!(
-            "Pip cache:\n{}\n",
-            run_cleanup(
-                "/usr/bin/python3",
-                &[
-                    "-m",
-                    "pip",
-                    "--cache-dir",
-                    &cache().join("pip").to_string_lossy(),
-                    "cache",
-                    "purge"
-                ]
-            )
-        ));
-    }
-    if c.trash {
-        log.push_str(&format!(
-            "Trash:\n{}\n",
-            run_cleanup("/usr/bin/gio", &["trash", "--empty"])
-        ));
-    }
-    log.push_str(&format!("\nRoot free space before: {}\nAfter: {}\nChange: {:.1} MiB (includes concurrent disk activity)\n",bytes(before),bytes(available()),(available() as i128-before as i128) as f64/1048576.));
-    record("cleanup", &log)?;
-    if failed.get() {
-        Err(log)
-    } else {
-        Ok(log)
-    }
+    crate::cleanup_plan::Plan::build(c, &crate::cleanup_rules::Policy::default(), false)?
+        .execute_user()
 }
 #[derive(Clone, Default, Serialize)]
 pub struct Sample {
@@ -830,6 +795,14 @@ pub fn system_report() -> Result<String, String> {
     Ok(text)
 }
 pub fn verify_npm() -> Result<String, String> {
+    #[cfg(feature = "docs-demo")]
+    if std::env::var_os("TEND_DEMO_DIR").is_some() {
+        return Err("Cache verification is disabled in documentation recordings.".into());
+    }
+    let exclusions = crate::exclusions::Guard::acquire()?;
+    if let Some(reason) = exclusions.compiled.bulk_reason("npm-verify", None) {
+        return Ok(format!("npm cache verification skipped: {reason}"));
+    }
     let fallback = home().join(".opencode/bin/npm");
     let mut cmd = if fallback.is_file() {
         let mut c = Command::new(&fallback);
@@ -1084,7 +1057,10 @@ mod boundary_tests {
         let threads: Vec<_> = (0..8)
             .map(|_| std::thread::spawn(|| (0..100).map(|_| artifact_id()).collect::<Vec<_>>()))
             .collect();
-        let ids: Vec<_> = threads.into_iter().flat_map(|t| t.join().unwrap()).collect();
+        let ids: Vec<_> = threads
+            .into_iter()
+            .flat_map(|t| t.join().unwrap())
+            .collect();
         assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
     }
     struct Scratch(PathBuf);
@@ -1129,7 +1105,13 @@ mod boundary_tests {
         fs::create_dir(&cache).unwrap();
         let original = t.old_file("cache/sub/log");
         let outside = t.old_file("outside/log");
-        assert!(old_files(&cache, 30).contains(&original));
+        assert!(old_files(
+            &cache,
+            30,
+            &crate::exclusions::Policy::default().compile().unwrap()
+        )
+        .unwrap()
+        .contains(&original));
         fs::rename(cache.join("sub"), cache.join("original-sub")).unwrap();
         symlink(t.0.join("outside"), cache.join("sub")).unwrap();
         assert!(remove_old_file(&cache, &original, 30).is_err());
@@ -1170,7 +1152,15 @@ mod boundary_tests {
         let fresh = root.join("fresh");
         fs::write(&fresh, b"new").unwrap();
         symlink(&external, root.join("link")).unwrap();
-        assert_eq!(old_files(&root, 30), vec![old.clone()]);
+        assert_eq!(
+            old_files(
+                &root,
+                30,
+                &crate::exclusions::Policy::default().compile().unwrap()
+            )
+            .unwrap(),
+            vec![old.clone()]
+        );
         assert!(!remove_old_file(&root, &fresh, 30).unwrap());
         assert!(!remove_old_file(&root, &root.join("link"), 30).unwrap());
         assert!(remove_old_file(&root, &external, 30).is_err());

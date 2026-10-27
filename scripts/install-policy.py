@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 
@@ -17,8 +19,36 @@ MODULE = '/usr/local/lib/dev-maintenance/tend_cleanup_policy.py'
 HELPER = '/usr/local/libexec/tend-admin'
 WORKER = '/usr/local/libexec/tend-worker'
 READY = '/etc/tend/cleanup-policy-ready'
-TARGETS = (ENGINE, MODULE, HELPER, WORKER, READY)
+EXCLUSION_CONFIG='/etc/tend/exclusions.json'
+EXCLUSION_LOCK='/etc/tend/exclusions.lock'
+EXCLUSION_READY='/etc/tend/exclusions-ready'
+TARGETS = (ENGINE, MODULE, HELPER, WORKER, READY, EXCLUSION_CONFIG, EXCLUSION_LOCK, EXCLUSION_READY)
 MARKER = '# Tend cleanup integration v1'
+
+
+def release_capabilities():
+    """Reject mixed releases before writing any readiness marker."""
+    commands=[(REPO/'target/release/tend-admin','administrator'),
+              (REPO/'target/release/tend-worker','worker'),
+              (REPO/'assets/tend_cleanup_policy.py','maintenance-adapter')]
+    for path,role in commands:
+        args=[sys.executable,str(path),'--capabilities'] if role=='maintenance-adapter' else [str(path),'capabilities']
+        result=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=3)
+        value=json.loads(result.stdout) if result.returncode==0 and len(result.stdout)<=8192 else {}
+        if not isinstance(value,dict) or type(value.get('protocol')) is not int or value['protocol']<3 or value.get('role')!=role or value.get('cleanup_exclusions') is not True or value.get('explained_cleanup') is not True:
+            raise ValueError('Build a matching exclusions-capable release before installation: '+str(path))
+
+
+def saved_exclusions(path):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):raise ValueError('Invalid exclusions policy file')
+        raw=stream.read(512*1024+1)
+    if len(raw)>512*1024:raise ValueError('Exclusions exceed 512 KiB')
+    namespace={'__name__':'tend_installer_policy_validator'}
+    source=(REPO/'assets/tend_cleanup_policy.py').read_text()
+    exec(compile(source,'tend_cleanup_policy.py','exec'),namespace)
+    return namespace['validate_exclusions'](json.loads(raw))
 
 
 def patch_engine(original):
@@ -113,7 +143,23 @@ def main():
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit('Maintenance or another settings change is active; retry installation later.')
+    policy_lock=None
+    policy_path=destination(root,EXCLUSION_CONFIG)
+    exclusion_lock_path=destination(root,EXCLUSION_LOCK)
+    for path in (policy_path,exclusion_lock_path):protected(path,root)
+    if not policy_path.exists() and (exclusion_lock_path.exists() or destination(root,EXCLUSION_READY).exists()):
+        raise SystemExit('The shared exclusions policy is missing. Restore it before replacing the integration; defaults would lose unknown protections.')
+    if args.apply and exclusion_lock_path.exists():
+        fd=os.open(exclusion_lock_path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        policy_lock=os.fdopen(fd,'r')
+        if not stat.S_ISREG(os.fstat(fd).st_mode):raise SystemExit('Invalid exclusions lock')
+        try:fcntl.flock(policy_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise SystemExit('Cleanup is active; retry integration installation later.')
     if args.rollback:
+        if policy_path.exists():
+            saved=saved_exclusions(policy_path)
+            if any(p['enabled'] for p in saved['paths']):
+                raise SystemExit('Disable all shared exclusions explicitly before rolling back their enforcement integration.')
         manifest = json.loads(args.rollback.read_text())
         if manifest.get('root') != str(root):
             raise SystemExit('Rollback root mismatch')
@@ -130,6 +176,8 @@ def main():
                 protected(backup, root)
             changes[path] = (backup.read_bytes(), entry['mode']) if backup else None
     else:
+        release_capabilities()
+        if policy_path.exists():saved_exclusions(policy_path)
         engine = destination(root, ENGINE)
         original = engine.read_text()
         candidate = patch_engine(original)
@@ -140,6 +188,11 @@ def main():
             destination(root, WORKER): ((REPO/'target/release/tend-worker').read_bytes(), 0o755),
             destination(root, READY): (b'1\n', 0o644),
         }
+        # Keep the lock inode and existing policy unchanged on repeat upgrades.
+        for name,data in [(EXCLUSION_LOCK,b''),(EXCLUSION_CONFIG,b'{"version":1,"revision":0,"paths":[]}\n')]:
+            path=destination(root,name);protected(path,root)
+            if not path.exists():changes[path]=(data,0o644)
+        changes[destination(root,EXCLUSION_READY)]=(b'1\n',0o644)
         compile(changes[destination(root, MODULE)][0], MODULE, 'exec')
     for path in changes:
         protected(path, root)

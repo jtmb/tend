@@ -60,7 +60,25 @@ class InstallerTests(unittest.TestCase):
         for name,data in originals.items():
             if name.startswith('/etc/') or '/systemd/' in name:self.assertEqual((stage/name.lstrip('/')).read_bytes(),data)
         self.assertEqual((stage/'etc/tend/cleanup-policy-ready').read_text(),'1\n')
+        exclusions=stage/'etc/tend/exclusions.json';lock=stage/'etc/tend/exclusions.lock';inode=lock.stat().st_ino
+        saved=dict(version=1,revision=4,paths=[dict(path='/home/james/keep',enabled=True,note='Retain')])
+        exclusions.write_text(json.dumps(saved));policy_bytes=exclusions.read_bytes()
         run('--apply');self.assertEqual(engine.read_bytes(),patched)
+        self.assertEqual(lock.stat().st_ino,inode);self.assertEqual(exclusions.read_bytes(),policy_bytes)
+        retained=exclusions.with_suffix('.retained.json');exclusions.rename(retained)
+        rejected=subprocess.run(['python3',str(ROOT/'scripts/install-policy.py'),'--root',str(stage),'--apply'],capture_output=True,text=True)
+        self.assertNotEqual(rejected.returncode,0);self.assertIn('policy is missing',rejected.stderr)
+        self.assertFalse(exclusions.exists());retained.rename(exclusions)
+        current=hashes()
+        rejected=subprocess.run(['python3',str(ROOT/'scripts/install-policy.py'),'--root',str(stage),'--rollback',str(manifest),'--apply'],capture_output=True,text=True)
+        self.assertNotEqual(rejected.returncode,0);self.assertIn('Disable all shared exclusions',rejected.stderr)
+        self.assertEqual(current,hashes())
+        import fcntl
+        with lock.open() as active:
+            fcntl.flock(active,fcntl.LOCK_SH|fcntl.LOCK_NB)
+            rejected=subprocess.run(['python3',str(ROOT/'scripts/install-policy.py'),'--root',str(stage),'--apply'],capture_output=True,text=True)
+            self.assertNotEqual(rejected.returncode,0);self.assertIn('Cleanup is active',rejected.stderr)
+        exclusions.write_text(json.dumps({**saved,'paths':[]}))
         run('--rollback',str(manifest),'--dry-run');run('--rollback',str(manifest),'--apply')
         for name,data in originals.items():self.assertEqual((stage/name.lstrip('/')).read_bytes(),data)
         self.assertFalse((stage/'etc/tend/cleanup-policy-ready').exists())

@@ -41,7 +41,7 @@ elif name=='systemctl':
     if args[0]=='is-enabled': sys.exit(1)
 elif name=='date': print('07:00:00')
 elif name=='df': print('Avail\n80000000000')
-elif name=='apt-config': print('Unattended-Upgrade::Automatic-Reboot "true";')
+elif name=='apt-config': print("TEND_ARCHIVES='/qa/apt-cache'" if args and args[0]=='shell' else 'Unattended-Upgrade::Automatic-Reboot "true";')
 elif name=='crontab':
     path=Path('/qa/crontab')
     if args==['-l']:
@@ -65,7 +65,8 @@ elif name=='docker':
         print(Path('/qa/docker-inspect.jsonl').read_text(),end='')
     else: raise RuntimeError('Unexpected Docker mutation or command')
 elif name=='runuser':
-    if '/usr/bin/docker' in args:
+    if 'capabilities' in args: print(json.dumps(dict(protocol=3,role='worker',cleanup_exclusions=True,explained_cleanup=True)))
+    elif '/usr/bin/docker' in args:
         action=args[args.index('/usr/bin/docker')+1:]
         ident='a'*64
         if action[0]=='context': print('unix:///var/run/docker.sock')
@@ -86,18 +87,30 @@ class AdminSandboxTests(unittest.TestCase):
             '--symlink','usr/lib64','/lib64','--','/usr/bin/true'],capture_output=True)
         if probe.returncode:
             raise unittest.SkipTest('Unprivileged mount namespaces unavailable')
+        # Share immutable installed-mode binaries across retained fixtures. Each
+        # sandbox mounts them read-only; avoid a new multi-MiB copy per test.
+        Path('/tmp/opencode').mkdir(exist_ok=True)
+        cls.binaries=Path(tempfile.mkdtemp(prefix='tend-qa-binaries-',dir='/tmp/opencode'))
+        for name in ('tend-admin','tend-worker'):
+            target=cls.binaries/name
+            shutil.copyfile(ROOT/'target/debug'/name,target);target.chmod(0o755)
 
     def setUp(self):
         Path('/tmp/opencode').mkdir(exist_ok=True)
         self.stage = Path(tempfile.mkdtemp(prefix='tend-admin-qa-',dir='/tmp/opencode'))
         for name in ['etc/tend','etc/systemd/system','etc/sysctl.d',
                      'etc/systemd/zram-generator.conf.d','var/lib/dev-maintenance',
-                     'run','home/james','qa','power','generators']:
+                     'run','home/james','qa','power','generators',
+                     'usr/local/libexec','usr/local/lib/dev-maintenance']:
             (self.stage/name).mkdir(parents=True,exist_ok=True)
         self.write('etc/tend/settings.json',json.dumps(SETTINGS))
         self.write('etc/tend/integration-ready','1\n')
         self.write('etc/tend/cleanup-policy-ready','1\n')
         self.write('etc/tend/cleanup-policy.json',json.dumps(POLICY))
+        self.write('etc/tend/exclusions-ready','1\n')
+        self.write('etc/tend/exclusions.lock','')
+        self.write('etc/tend/exclusions.json',json.dumps(dict(version=1,revision=0,paths=[])))
+        self.write('usr/local/lib/dev-maintenance/tend_cleanup_policy.py',(ROOT/'assets/tend_cleanup_policy.py').read_text())
         self.write('qa/swappiness','60\n')
         self.write('generators/zram-generator','fixture generator; never executed\n')
         mock=self.write('qa/mock-command',MOCK);mock.chmod(0o755)
@@ -119,11 +132,17 @@ class AdminSandboxTests(unittest.TestCase):
     def invoke(self,action,data=None,*extra,fail='',uid='0',api=False):
         cmd=['bwrap','--die-with-parent','--unshare-all','--new-session',
              '--uid','0','--gid','0','--cap-drop','ALL',
-             '--ro-bind','/usr','/usr','--symlink','usr/lib','/lib',
+             '--tmpfs','/usr',
+             '--ro-bind','/usr/bin','/usr/bin','--ro-bind','/usr/sbin','/usr/sbin',
+             '--ro-bind','/usr/lib','/usr/lib','--ro-bind','/usr/lib64','/usr/lib64',
+             '--ro-bind','/usr/share','/usr/share','--symlink','usr/lib','/lib',
              '--symlink','usr/lib64','/lib64','--proc','/proc','--dev','/dev',
              '--ro-bind','/sys','/sys']
         for folder in ['etc','var','run','home','qa']:
             cmd += ['--bind',str(self.stage/folder),'/'+folder]
+        cmd += ['--bind',str(self.stage/'usr/local'),'/usr/local']
+        for name in ('tend-admin','tend-worker'):
+            cmd+=['--ro-bind',str(self.binaries/name),'/usr/local/libexec/'+name]
         cmd += ['--bind',str(self.stage/'qa/swappiness'),'/proc/sys/vm/swappiness',
                 '--ro-bind',str(self.stage/'power'),'/sys/class/power_supply',
                 '--ro-bind',str(self.stage/'generators'),'/usr/lib/systemd/system-generators',
@@ -242,6 +261,52 @@ class AdminSandboxTests(unittest.TestCase):
         (self.stage/'etc/tend/cleanup-policy-ready').rename(self.stage/'etc/tend/cleanup-policy-ready.saved')
         self.assertNotEqual(self.invoke('daily-policy',changed).returncode,0)
 
+    def test_exclusions_save_revisions_backups_and_capability_refusal(self):
+        value=dict(version=1,revision=0,paths=[dict(path='/home/james/keep',enabled=True,note='Keep')])
+        self.assert_ok(self.invoke('exclusions-save',value))
+        saved=json.loads((self.stage/'etc/tend/exclusions.json').read_text())
+        self.assertEqual(saved,{**value,'revision':1})
+        self.assertEqual(json.loads((self.stage/'etc/tend/exclusions.previous.json').read_text())['revision'],0)
+        stale=self.invoke('exclusions-save',value)
+        self.assertNotEqual(stale.returncode,0);self.assertIn('another session',stale.stderr)
+        self.assertNotEqual(self.invoke('exclusions-save',{**saved,'restart':True}).returncode,0)
+        self.assertNotEqual(self.invoke('exclusions-save',saved,fail='runuser').returncode,0)
+        self.assertEqual(json.loads((self.stage/'etc/tend/exclusions.json').read_text()),saved)
+        self.write('usr/local/lib/dev-maintenance/tend_cleanup_policy.py','print("{}")\n').chmod(0o644)
+        old_adapter=self.invoke('exclusions-save',saved)
+        self.assertNotEqual(old_adapter.returncode,0);self.assertIn('Matching exclusions integration',old_adapter.stderr)
+        self.assertEqual(json.loads((self.stage/'etc/tend/exclusions.json').read_text()),saved)
+        for path,data in self.before.items():
+            if path.startswith('etc/') and '/exclusions' not in path:
+                self.assertEqual((self.stage/path).read_bytes(),data)
+        self.assertFalse(any(c['program'] in ('apt-get','systemctl') for c in self.commands()))
+
+    def test_exclusions_cannot_change_during_cleanup_and_apt_obeys_protection(self):
+        import fcntl
+        value=dict(version=1,revision=0,paths=[])
+        with (self.stage/'etc/tend/exclusions.lock').open() as lock:
+            fcntl.flock(lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
+            busy=self.invoke('exclusions-save',value)
+            self.assertNotEqual(busy.returncode,0);self.assertIn('active',busy.stderr)
+        self.write('etc/tend/exclusions.json',json.dumps({**value,'paths':[dict(path='/qa/apt-cache/package',enabled=True,note='Keep')]})).chmod(0o644)
+        self.assert_ok(self.invoke('apt-cleanup',dict(revision=0)))
+        self.assertFalse(any(c['program']=='apt-get' for c in self.commands()))
+        self.assertNotEqual(self.invoke('apt-cleanup',dict(revision=1)).returncode,0)
+        self.write('etc/tend/exclusions.json',json.dumps(value)).chmod(0o644)
+        self.assert_ok(self.invoke('apt-cleanup',dict(revision=0)))
+        self.assertEqual(sum(c['program']=='apt-get' for c in self.commands()),1)
+
+    def test_exclusion_editor_can_repair_a_path_that_became_unresolvable(self):
+        (self.stage/'qa/loop').symlink_to('/qa/loop')
+        empty=dict(version=1,revision=0,paths=[])
+        broken={**empty,'paths':[dict(path='/qa/loop',enabled=True,note='Loop')]}
+        failed=self.invoke('exclusions-save',broken)
+        self.assertNotEqual(failed.returncode,0)
+        self.assertEqual(json.loads((self.stage/'etc/tend/exclusions.json').read_text()),empty)
+        self.write('etc/tend/exclusions.json',json.dumps(broken)).chmod(0o644)
+        self.assert_ok(self.invoke('exclusions-save',empty))
+        self.assertEqual(json.loads((self.stage/'etc/tend/exclusions.json').read_text()),{**empty,'revision':1})
+
     def test_cleanup_passes_exact_policy_and_reports_worker_failure(self):
         c=dict(apt=True,docker_build=False,docker_images=False,npm_logs=False,
                thumbnails=False,trash=False,pip=False,age_days=14,keep_gb=5)
@@ -252,6 +317,42 @@ class AdminSandboxTests(unittest.TestCase):
         failed=self.invoke('cleanup',c,fail='runuser')
         self.assertNotEqual(failed.returncode,0)
         self.assertIn('User cleanup error',failed.stderr)
+
+    def test_typed_cleanup_rechecks_exact_files_and_global_policy_in_private_namespace(self):
+        import time
+        cleanup=dict(apt=False,docker_build=False,docker_images=False,npm_logs=True,
+                     thumbnails=False,trash=False,pip=False,age_days=14,keep_gb=5,npm_log_days=30)
+        for name in ('protected.log','eligible.log','replace.log'):
+            path=self.write('home/james/.npm/_logs/'+name,'retained fixture '+name)
+            os.utime(path,(time.time()-60*86400,)*2)
+        excluded=dict(version=1,revision=0,paths=[dict(path='/home/james/.npm/_logs/protected.log',enabled=True,note='Keep')])
+        self.write('etc/tend/exclusions.json',json.dumps(excluded)).chmod(0o644)
+        preview=self.invoke('cleanup-plan',None,json.dumps(cleanup),'preview',uid='1000',api=True)
+        self.assert_ok(preview);self.assertIn('2 files',preview.stdout);self.assertIn('1 protected',preview.stdout)
+        self.assertIn('Why:',preview.stdout);self.assertIn('Effect:',preview.stdout)
+        changed=self.invoke('cleanup-plan',None,json.dumps(cleanup),'policy-change',uid='1000',api=True)
+        self.assertNotEqual(changed.returncode,0);self.assertIn('Exclusions changed',changed.stderr)
+        self.assertTrue((self.stage/'home/james/.npm/_logs/eligible.log').exists())
+        applied=self.invoke('cleanup-plan',None,json.dumps(cleanup),'replace',uid='1000',api=True)
+        self.assert_ok(applied);self.assertIn('removed 1 files; 1 changed or protected',applied.stdout)
+        self.assertFalse((self.stage/'home/james/.npm/_logs/eligible.log').exists())
+        self.assertEqual((self.stage/'home/james/.npm/_logs/replace.log').read_bytes(),b'replacement must remain')
+        self.assertTrue((self.stage/'home/james/.npm/_logs/replace.retained-original').exists())
+        self.assertTrue((self.stage/'home/james/.npm/_logs/protected.log').exists())
+
+    def test_pip_cache_alias_cannot_bypass_a_protected_target(self):
+        target=self.stage/'home/james/keep-pip';target.mkdir()
+        cache=self.stage/'home/james/.cache';cache.mkdir()
+        (cache/'pip').symlink_to('/home/james/keep-pip',target_is_directory=True)
+        value=dict(version=1,revision=0,paths=[dict(path='/home/james/keep-pip',enabled=True,note='Keep')])
+        self.write('etc/tend/exclusions.json',json.dumps(value)).chmod(0o644)
+        cleanup=dict(apt=False,docker_build=False,docker_images=False,npm_logs=False,pip=True)
+        preview=self.invoke('cleanup-plan',None,json.dumps(cleanup),'preview',uid='1000',api=True)
+        self.assert_ok(preview);self.assertIn('protected path overlaps the pip cache',preview.stdout)
+        applied=self.invoke('cleanup-plan',None,json.dumps(cleanup),'apply',uid='1000',api=True)
+        self.assert_ok(applied);self.assertIn('skipped',applied.stdout)
+        self.assertTrue(target.exists())
+        self.assertTrue(all(c['program']=='id' for c in self.commands()))
 
     def test_update_reboot_override_battery_and_failure(self):
         self.assert_ok(self.invoke('updates'))

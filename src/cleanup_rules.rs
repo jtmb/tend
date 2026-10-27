@@ -11,7 +11,7 @@ use std::{
     },
     path::{Path, PathBuf},
 };
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     pub name: String,
@@ -21,7 +21,7 @@ pub struct Rule {
     pub recursive: bool,
     pub enabled: bool,
 }
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
     pub rules: Vec<Rule>,
@@ -125,8 +125,9 @@ fn matches(name: &std::ffi::OsStr, patterns: &str) -> bool {
             .unwrap_or(false)
     })
 }
-fn candidates(r: &Rule) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn candidates(r: &Rule) -> Result<Vec<PathBuf>, String> {
     r.validate()?;
+    let exclusions = crate::exclusions::Guard::acquire()?;
     let root = r.folder.canonicalize().map_err(|e| e.to_string())?;
     let home = w::home().canonicalize().map_err(|e| e.to_string())?;
     let dev = fs::metadata(&root).map_err(|e| e.to_string())?.dev();
@@ -136,6 +137,9 @@ fn candidates(r: &Rule) -> Result<Vec<PathBuf>, String> {
     let mut seen = HashSet::new();
     let mut visited = 0usize;
     while let Some(p) = todo.pop() {
+        if exclusions.compiled.protects(&p) {
+            continue;
+        }
         visited += 1;
         if visited > 250_000 {
             return Err("Rule exceeded 250,000 entries. Choose a smaller folder.".into());
@@ -167,6 +171,7 @@ fn candidates(r: &Rule) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 pub fn preview(p: &Policy) -> Result<String, String> {
+    let _exclusions = crate::exclusions::Guard::acquire()?;
     let mut text = String::from("Additional cleanup rules — preview only\n");
     for r in p.rules.iter().filter(|r| r.enabled) {
         match candidates(r) {
@@ -201,6 +206,7 @@ pub fn apply(p: &Policy) -> Result<String, String> {
     if std::env::var_os("TEND_DEMO_DIR").is_some() {
         return Err("Deletion is disabled in documentation recordings.".into());
     }
+    let exclusions = crate::exclusions::Guard::acquire()?;
     let mut text = String::new();
     let mut failed = false;
     for r in p.rules.iter().filter(|r| r.enabled) {
@@ -210,7 +216,8 @@ pub fn apply(p: &Policy) -> Result<String, String> {
                 let mut count = 0;
                 let mut errors = 0;
                 for f in files {
-                    match w::remove_old_file(&root, &f, r.days) {
+                    match w::remove_old_file_guarded(&root, &f, r.days, &exclusions.compiled, None)
+                    {
                         Ok(true) => count += 1,
                         Ok(false) => {}
                         Err(_) => errors += 1,
@@ -492,6 +499,7 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
         return Ok("No current scheduled run.".into());
     }
     let _lock = cleanup_lock()?;
+    let _exclusions = crate::exclusions::Guard::acquire()?;
     let path = w::state_dir().join("scheduled-cleanup.json");
     let mut state: serde_json::Value = fs::read_to_string(&path)
         .ok()
@@ -534,7 +542,9 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
         report.push_str("APT cache remains handled by the existing system maintenance job.\n");
     }
     let mut success = true;
-    for result in [w::cleanup_user(&c), apply(&policy)] {
+    for result in
+        [crate::cleanup_plan::Plan::build(&c, &policy, false).and_then(|p| p.execute_user())]
+    {
         match result {
             Ok(s) => report.push_str(&s),
             Err(e) => {

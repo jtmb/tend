@@ -14,13 +14,13 @@ pub struct Capabilities {
 }
 pub fn for_role(role: &'static str) -> Capabilities {
     Capabilities {
-        protocol: 2,
+        protocol: 3,
         version: env!("CARGO_PKG_VERSION"),
         role,
         structured_observations: role == "worker",
         bounded_history: role == "worker",
-        cleanup_exclusions: false,
-        explained_cleanup: false,
+        cleanup_exclusions: role == "worker" || role == "administrator",
+        explained_cleanup: role == "worker" || role == "administrator",
         maintenance_events: false,
     }
 }
