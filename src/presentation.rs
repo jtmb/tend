@@ -47,13 +47,12 @@ pub fn exact(ts: i64) -> String {
         .unwrap_or_else(|| "Unavailable".into())
 }
 pub fn date(raw: &str) -> String {
-    let parts: Vec<_> = raw
-        .split('-')
-        .filter_map(|s| s.parse::<i32>().ok())
-        .collect();
-    if parts.len() != 3 {
+    if raw.is_empty() {
         return "No report yet".into();
     }
+    let segments:Vec<_>=raw.split('-').collect();
+    if segments.len()!=3||segments[0].len()!=4||segments[1].len()!=2||segments[2].len()!=2||segments.iter().any(|s|!s.bytes().all(|b|b.is_ascii_digit())) {return "Unavailable".into();}
+    let parts:Vec<i32>=segments.iter().map(|s|s.parse().unwrap()).collect();
     DateTime::new(&zone(), parts[0], parts[1], parts[2], 12, 0, 0.)
         .map(|d| day(&d))
         .unwrap_or_else(|_| "Unavailable".into())
@@ -113,6 +112,8 @@ mod tests {
         for raw in ["n/a", "@NaN", "@inf", "@-1", ""] {
             assert_eq!(systemd(raw), None);
         }
-        assert_eq!(date("bad"), "No report yet");
+        assert_eq!(date("bad"), "Unavailable");
+        assert_eq!(date(""), "No report yet");
+        assert_eq!(date("2026-x-10-26"),"Unavailable");
     }
 }

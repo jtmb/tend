@@ -198,7 +198,7 @@ impl Plan {
             {
                 plan.inventory.push_str(&format!(
                     "Obsolete APT downloads (simulation):\n{}\n",
-                    w::command("/usr/bin/apt-get", &["--simulate", "autoclean"])
+                    crate::queries::run(std::process::Command::new("/usr/bin/apt-get").args(["--simulate","autoclean"]),std::time::Duration::from_secs(20),1024*1024).unwrap_or_else(|e|format!("Inventory unavailable: {e}"))
                 ));
             }
             if plan
@@ -208,7 +208,7 @@ impl Plan {
             {
                 plan.inventory.push_str(&format!(
                     "Docker inventory (usage is not a deletion estimate):\n{}\n",
-                    w::command("/usr/bin/docker", &["system", "df"])
+                    crate::queries::run(std::process::Command::new("/usr/bin/docker").args(["system","df"]),std::time::Duration::from_secs(20),1024*1024).unwrap_or_else(|e|format!("Inventory unavailable: {e}"))
                 ));
             }
         }
@@ -279,6 +279,13 @@ impl Plan {
         lines.join("\n")
     }
     pub fn execute_user(&self) -> Result<String, String> {
+        w::audit_result("cleanup",self.execute_unrecorded())
+    }
+    pub fn execute_daily(&self) -> Result<String,String> {
+        w::audit_result("daily-cleanup",self.execute_unrecorded())
+    }
+    /// Orchestrators record a combined result after their own durable receipt.
+    pub fn execute_unrecorded(&self) -> Result<String, String> {
         #[cfg(feature = "docs-demo")]
         if std::env::var_os("TEND_DEMO_DIR").is_some() {
             return Err("Deletion is disabled in documentation recordings.".into());
@@ -373,12 +380,7 @@ impl Plan {
                 (after as i128 - before as i128) as f64 / 1048576.
             ));
         }
-        let mut report = lines.join("\n");
-        if let Err(error) = w::record("cleanup", &report) {
-            report.push_str(&format!(
-                "\nCleanup results are above; history could not be saved: {error}"
-            ));
-        }
+        let report = lines.join("\n");
         if failed {
             Err(report)
         } else {

@@ -15,6 +15,9 @@ const MIB: u64 = 1024 * 1024;
 const RESERVE: u64 = 8 * MIB;
 const MAX_PAYLOAD: usize = 256 * 1024;
 const PAGE_BYTES: usize = 2 * 1024 * 1024;
+// The shared maintenance database and its DELETE journal together use at most
+// 8 MiB. Reserve that within the configured total, even before integration.
+pub const SYSTEM_HISTORY_RESERVE_MIB: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -90,6 +93,13 @@ pub struct Page {
     pub events: Vec<Event>,
     pub next: Option<Cursor>,
 }
+#[derive(Clone,Default)]
+pub struct EventFilter {
+    pub minimum_ms: i64,
+    pub category: u8,
+    pub outcome: u8,
+    pub search: String,
+}
 pub struct History {
     db: Connection,
     path: PathBuf,
@@ -138,7 +148,7 @@ impl History {
         Ok(Some(Self {
             db,
             path: path.into(),
-            max_bytes: settings.max_mib as u64 * MIB,
+            max_bytes: (settings.max_mib - SYSTEM_HISTORY_RESERVE_MIB) as u64 * MIB,
             event_bytes: 32 * MIB,
             retention_days: settings.retention_days,
             min_free_bytes: 2 * 1024 * MIB,
@@ -152,7 +162,7 @@ impl History {
         settings.validate()?;
         Self::open_limits(
             path,
-            settings.max_mib as u64 * MIB,
+            (settings.max_mib - SYSTEM_HISTORY_RESERVE_MIB) as u64 * MIB,
             32 * MIB,
             settings.retention_days,
             2 * 1024 * MIB,
@@ -413,18 +423,41 @@ impl History {
         before: Option<&Cursor>,
         kind: Option<&str>,
     ) -> Result<Page, String> {
+        self.event_page(limit,before,kind,None)
+    }
+    pub fn reports(&self, limit: usize, before: Option<&Cursor>) -> Result<Page,String> {
+        self.event_page(limit,before,None,Some("report/"))
+    }
+    pub fn filtered_events(&self, filter: &EventFilter, limit: usize, before: Option<&Cursor>) -> Result<Page,String> {
+        if filter.category>4||filter.outcome>4||filter.search.chars().count()>240 {return Err("Invalid activity filter.".into());}
+        let limit=limit.clamp(1,200);
+        let mut statement=self.db.prepare("SELECT row,id,kind,time_ms,boot_id,payload FROM events
+            WHERE time_ms>=?1 AND (?2 IS NULL OR time_ms<?2 OR(time_ms=?2 AND row<?3))
+            AND (?4=0 OR (?4=1 AND kind='report/updates') OR (?4=2 AND kind IN('report/cleanup','report/custom-cleanup','report/scheduled-cleanup','report/daily-cleanup','report/npm-verify'))
+                OR (?4=3 AND kind IN('diagnostic','health-alert')) OR (?4=4 AND kind IN('report/settings','report/startup','report/service','report/graphics','report/memory','report/memory-restore','report/undo')))
+            AND (?5=0 OR (?5=1 AND json_extract(payload,'$.success')=1) OR (?5=2 AND json_extract(payload,'$.success')=0) OR (?5=3 AND json_extract(payload,'$.status')='deferred') OR (?5=4 AND json_extract(payload,'$.status')='running'))
+            AND (?6='' OR instr(lower(kind||' '||COALESCE(json_extract(payload,'$.report'),json_extract(payload,'$.workload'),'')),lower(?6))>0)
+            ORDER BY time_ms DESC,row DESC LIMIT ?7").map_err(error)?;
+        let rows=statement.query(params![filter.minimum_ms,before.map(|c|c.time_ms),before.map(|c|c.row),filter.category,filter.outcome,filter.search,(limit+1) as i64]).map_err(error)?;
+        Self::read_event_page(rows,limit)
+    }
+    fn event_page(&self, limit: usize, before: Option<&Cursor>, kind: Option<&str>, prefix: Option<&str>) -> Result<Page,String> {
         let limit = limit.clamp(1, 200);
         let mut query = self.db.prepare("SELECT row,id,kind,time_ms,boot_id,payload FROM events
-            WHERE (?1 IS NULL OR kind=?1) AND (?2 IS NULL OR time_ms < ?2 OR (time_ms=?2 AND row < ?3))
+            WHERE (?1 IS NULL OR kind=?1) AND (?2 IS NULL OR time_ms < ?2 OR (time_ms=?2 AND row < ?3)) AND (?5 IS NULL OR kind GLOB (?5||'*'))
             ORDER BY time_ms DESC,row DESC LIMIT ?4").map_err(error)?;
-        let mut rows = query
+        let rows = query
             .query(params![
                 kind,
                 before.map(|c| c.time_ms),
                 before.map(|c| c.row),
-                (limit + 1) as i64
+                (limit + 1) as i64,
+                prefix
             ])
             .map_err(error)?;
+        Self::read_event_page(rows,limit)
+    }
+    fn read_event_page(mut rows: rusqlite::Rows<'_>,limit:usize)->Result<Page,String> {
         let mut events: Vec<Event> = Vec::new();
         let mut total = 0;
         let mut more = false;
@@ -459,6 +492,18 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn activity_filters_preserve_outcomes_and_bound_search_parameters() {
+        let path=fixture();
+        let mut store=History::open_limits(&path,16*MIB,2*MIB,30,0).unwrap();
+        let now=(w::now()*1000) as i64;
+        for (i,kind,success,text) in [(0,"report/updates",true,"Fixture completed"),(1,"report/updates",false,"Fixture failed"),(2,"report/cleanup",true,"Éditeur cache")]
+        {store.insert(&format!("fixture:{i}"),kind,now+i,"fixture",&serde_json::json!({"success":success,"report":text})).unwrap();}
+        let page=store.filtered_events(&EventFilter {category:1,outcome:2,..Default::default()},200,None).unwrap();
+        assert_eq!(page.events.len(),1);assert_eq!(page.events[0].id,"fixture:1");
+        let page=store.filtered_events(&EventFilter {search:"Éditeur".into(),..Default::default()},200,None).unwrap();assert_eq!(page.events.len(),1);
+        let page=store.filtered_events(&EventFilter {search:"' OR 1=1 --".into(),..Default::default()},200,None).unwrap();assert!(page.events.is_empty());
+    }
     fn fixture() -> PathBuf {
         let path = PathBuf::from("/tmp/opencode").join(format!(
             "tend-history-{}-{}",

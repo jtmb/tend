@@ -1,4 +1,5 @@
 mod cleanup_items_ui;
+mod activity_ui;
 mod cleanup_policy_ui;
 mod cleanup_ui;
 mod diagnostics_ui;
@@ -515,44 +516,7 @@ fn build(app: &adw::Application) {
     care.append(&appearance);
     care.append(&label("Tend 0.2", "caption"));
     stack.add_titled(&scroll(&care), Some("care"), "Appearance");
-    let logs = page(
-        "Activity",
-        "The latest maintenance journal, loaded only when requested.",
-    );
-    let load = gtk::Button::with_label("Load recent activity");
-    load.set_halign(gtk::Align::Start);
-    logs.append(&load);
-    let view = workbench::text_panel(&logs);
-    workbench::report_hint(
-        &view,
-        "Choose Load recent activity to read the maintenance journal.",
-    );
-    workbench::exports(&logs, &view);
-    load.connect_clicked(move |b| {
-        b.set_sensitive(false);
-        view.buffer().set_text("Working…");
-        let (b, buffer) = (b.clone(), view.buffer());
-        job(
-            || {
-                output(
-                    "/usr/bin/journalctl",
-                    &[
-                        "-u",
-                        "dev-maintenance.service",
-                        "-n",
-                        "100",
-                        "--no-pager",
-                        "--output=short-iso",
-                    ],
-                )
-            },
-            move |r| {
-                b.set_sensitive(true);
-                buffer.set_text(&r.unwrap_or_else(|e| format!("Could not read journal: {e}")));
-            },
-        );
-    });
-    stack.add_titled(&scroll(&logs), Some("activity"), "Activity");
+    activity_ui::add(&stack,&win);
     let (n, f, l, p, b) = (
         next.clone(),
         free.clone(),
@@ -648,6 +612,11 @@ fn build(app: &adw::Application) {
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
     #[cfg(feature = "docs-demo")]
     if std::env::var_os("TEND_PERF_QA").is_some() {
+        return;
+    }
+    #[cfg(feature = "docs-demo")]
+    if let Ok(directory) = std::env::var("TEND_ACTIVITY_QA") {
+        docs_demo::activity_qa(app,&win,&outer,&stack,&directory);
         return;
     }
     #[cfg(feature = "docs-demo")]

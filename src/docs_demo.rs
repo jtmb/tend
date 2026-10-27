@@ -1776,6 +1776,63 @@ pub fn validate_capture(outer: &gtk::Box, stack: &gtk::Stack, path: &str) {
 
 /// Phase-specific real-widget regression checks. Runs in a retained fixture and
 /// exits only this NON_UNIQUE preview, never the installed/running application.
+pub fn activity_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::Box,stack:&gtk::Stack,directory:&str) {
+    assert!(std::env::var_os("TEND_DEMO_DIR").is_some());
+    let directory=std::path::PathBuf::from(directory);fs::create_dir_all(&directory).unwrap();
+    let (app,win,outer,stack)=(app.clone(),win.clone(),outer.clone(),stack.clone());
+    stack.set_transition_type(gtk::StackTransitionType::None);
+    glib::timeout_add_local_once(Duration::from_millis(700),move|| {
+        let home=tend::workstation::home();
+        tend::workstation::audit_result("updates",Ok("Fixture successful check; no packages changed".into())).unwrap();
+        assert!(tend::workstation::audit_result("updates",Err("Fixture failed check; no operation executed".into())).is_err());
+        let mut session=tend::diagnostics::Session::new("Fixture diagnostic",10).unwrap();
+        session.points.push(tend::diagnostics::Point {elapsed_ms:0,valid:false,cpu:None,memory_available:0,swap_used:0,cpu_pressure:None,memory_pressure:None,io_pressure:None,swap_in:None,swap_out:None});session.save().unwrap();
+        let journal=home.join("demo-journal.jsonl");let retained=home.join("retained-activity-journal.jsonl");fs::rename(&journal,&retained).unwrap();
+        let crash=json!({"__REALTIME_TIMESTAMP":(tend::workstation::now()*1000000).to_string(),"PRIORITY":"3","_COMM":"fixture-editor","_PID":"4100","COREDUMP_PID":"4100","COREDUMP_EXE":"/usr/bin/fixture-editor","COREDUMP_SIGNAL_NAME":"SIGSEGV","MESSAGE_ID":"fc2e22bc6ee647b6b90729ab34a250b1","MESSAGE":"Fixture editor crash; no application was closed"});
+        fs::write(&journal,format!("{crash}\n")).unwrap();
+        let activity=page(&stack,"activity");stack.set_visible_child_name("activity");
+        let control=|tip:&str|descendants(&activity).into_iter().find_map(|w|w.downcast::<gtk::DropDown>().ok().filter(|w|w.tooltip_text().as_deref()==Some(tip))).unwrap();
+        let source=control("Activity source");let kind=control("Activity category");let outcome=control("Activity result");let period=control("Activity time range");
+        let search=descendants(&activity).into_iter().find_map(|w|w.downcast::<gtk::SearchEntry>().ok().filter(|e|e.placeholder_text().as_deref()==Some("Search summaries and saved reports"))).unwrap();
+        let table=descendants(&activity).into_iter().find_map(|w|w.downcast::<gtk::ColumnView>().ok()).unwrap();let model=table.model().unwrap();
+        let load=button(&activity,"Load recent activity");
+        let read=||{load.emit_clicked();assert!(wait_until(||load.is_sensitive(),Duration::from_secs(20)),"{}",text(&activity));};
+        source.set_selected(1);period.set_selected(4);read();
+        assert_eq!(model.n_items(),200,"{}",text(&activity));assert!(button(&activity,"Older activity").is_sensitive());
+        model.select_item(0,true);assert!(text(&activity).contains("No outcome recorded; phase may be active or interrupted"));
+        button(&activity,"Older activity").emit_clicked();assert!(wait_until(||load.is_sensitive(),Duration::from_secs(20)));
+        assert_eq!(model.n_items(),150);assert!(!button(&activity,"Older activity").is_sensitive());
+        outcome.set_selected(4);read();assert_eq!(model.n_items(),1);model.select_item(0,true);assert!(text(&activity).contains("Awaiting result"));
+        outcome.set_selected(1);kind.set_selected(2);search.set_text("Fixture apt-cache");wait_main_context(Duration::from_millis(300));read();
+        assert_eq!(model.n_items(),25,"{}",text(&activity));model.select_item(0,true);
+        let body=text(&activity);for expected in ["Attempt 2 of 3","Elapsed: 1.0 s","Net free-space change:","Fixture apt-cache outcome"] {assert!(body.contains(expected),"{body}");}
+        source.set_selected(2);kind.set_selected(1);search.set_text("");wait_main_context(Duration::from_millis(300));read();
+        assert_eq!(model.n_items(),1);model.select_item(0,true);assert!(text(&activity).contains("Fixture successful check"));
+        outcome.set_selected(2);read();assert_eq!(model.n_items(),1);model.select_item(0,true);assert!(text(&activity).contains("Fixture failed check"));
+        outcome.set_selected(0);kind.set_selected(3);read();assert_eq!(model.n_items(),1);model.select_item(0,true);assert!(text(&activity).contains("Fixture diagnostic"));
+        source.set_selected(3);kind.set_selected(0);read();assert_eq!(model.n_items(),1);model.select_item(0,true);assert!(text(&activity).contains("SIGSEGV"));
+        button(&activity,"Export this page").emit_clicked();assert!(wait_until(||text(&activity).contains("Saved "),Duration::from_secs(15)));
+        assert_eq!(fs::read_dir(home.join("Documents/Tend reports")).unwrap().count(),1);
+        button(&activity,"Maintenance journal").emit_clicked();assert!(wait_until(||button(&activity,"Maintenance journal").is_sensitive(),Duration::from_secs(20)));
+        assert!(text(&activity).contains("Isolated maintenance journal preview"));assert_eq!(model.n_items(),0);
+        source.set_selected(1);load.emit_clicked();stack.set_visible_child_name("overview");assert!(wait_until(||load.is_sensitive(),Duration::from_secs(20)));assert_eq!(model.n_items(),0);
+        stack.set_visible_child_name("activity");read();assert_eq!(model.n_items(),200);model.select_item(0,true);
+        for width in [720,1100] {
+            win.set_default_size(width,820);wait_main_context(Duration::from_millis(250));
+            let paint=gtk::WidgetPaintable::new(Some(&outer));let snapshot=gtk::Snapshot::new();paint.snapshot(&snapshot,outer.width() as f64,outer.height() as f64);
+            win.renderer().unwrap().render_texture(&snapshot.to_node().unwrap(),None).save_to_png(directory.join(format!("activity-{width}.png"))).unwrap();
+        }
+        search.set_text(&"x".repeat(241));wait_main_context(Duration::from_millis(300));read();assert_eq!(model.n_items(),0);assert!(text(&activity).contains("Invalid activity filters"));
+        fs::rename(&journal,home.join("retained-fixture-crash.jsonl")).unwrap();fs::rename(&retained,&journal).unwrap();
+        fs::write(directory.join("activity-evidence.json"),serde_json::to_vec_pretty(&json!({
+            "root_writer_to_native_reader":true,"350_daily_outcomes_paged":true,"pending_is_not_claimed_completed":true,
+            "category_result_and_text_filters":true,"successful_and_failed_local_reports":true,"diagnostic_and_crash_details":true,
+            "page_export_fixture_only":true,"journal_preview_no_service_actions":true,"late_navigation_result_rejected":true,
+            "unbounded_query_rejected":true,"original_journal_preserved":true,"system_actions_invoked":false
+        })).unwrap()).unwrap();app.activate_action("quit",None);
+    });
+}
+
 pub fn cleanup_qa(
     app: &adw::Application,
     win: &adw::ApplicationWindow,

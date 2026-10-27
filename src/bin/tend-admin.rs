@@ -111,6 +111,11 @@ fn execute() -> Result<(), String> {
         println!("{}", tend::capabilities::json("administrator"));
         return Ok(());
     }
+    if args.first().map(String::as_str)==Some("maintenance-history") {
+        let query=tend::activity::Query {source:1,..Default::default()};
+        println!("{}",serde_json::to_string(&tend::activity::load(&query,None)?).map_err(|e|e.to_string())?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("notify") {
         return notify(
             args.get(1)

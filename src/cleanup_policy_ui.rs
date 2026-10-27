@@ -387,18 +387,18 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         confirm(&parent,"Clean the previewed items?","This permanently removes selected cache files and Trash contents. Docker checks eligibility at execution.","Clean selected",true,move||{
             if generation!=rev.get(){report_hint(&v,"Policy changed. Preview again before cleaning.");return;}
             plan.borrow_mut().take();editor.set_sensitive(false);let (v,editor,apply_done)=(v.clone(),editor.clone(),apply_done.clone());let selection=selection.clone();
-            job(move||{
+            job(move||w::audit_result("cleanup",(||{
                 let _lock=rules::cleanup_lock()?;
                 // Folder rules saved by another instance must also invalidate this preview.
                 if serde_json::to_value(rules::Policy::load()?).map_err(|e|e.to_string())?!=serde_json::to_value(&selection.custom).map_err(|e|e.to_string())?{return Err("Folder rules changed. Preview again.".into());}
                 let guard=tend::exclusions::Guard::acquire()?;selection.valid_for(&guard.compiled.policy)?;
-                let mut report=String::new();
+                let mut report=format!("Manual cleanup · exclusions revision {}\n",selection.exclusions.revision);
                 if selection.cleanup.apt&&selection.categories.iter().any(|c|matches!(c.action,tend::cleanup_plan::Action::Apt)&&c.skip.is_none()) {
                     if !tend::exclusions::integration_supported() {return Err("System helper update required.".into())}
-                    report=crate::privileged("apt-cleanup",Some(serde_json::json!({"revision":selection.exclusions.revision}).to_string()))?;
+                    report.push_str(&crate::privileged("apt-cleanup",Some(serde_json::json!({"revision":selection.exclusions.revision}).to_string()))?);
                 }
-                match selection.execute_user() {Ok(text)=>Ok(format!("{report}\n{text}")),Err(error)=>Err(format!("{report}\n{error}"))}
-            },move|result|{editor.set_sensitive(true);apply_done.set_sensitive(false);v.buffer().set_text(&result.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}")));});
+                match selection.execute_unrecorded() {Ok(text)=>Ok(format!("{report}\n{text}")),Err(error)=>Err(format!("{report}\n{error}"))}
+            })()),move|result|{editor.set_sensitive(true);apply_done.set_sensitive(false);v.buffer().set_text(&result.unwrap_or_else(|e|format!("Cleanup did not finish:\n{e}")));});
         });
     });
     let leave = invalidate.clone();

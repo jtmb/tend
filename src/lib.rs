@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 pub mod cleanup_plan;
 pub mod diagnostics;
 pub mod exclusions;
+pub mod queries;
+pub mod activity;
 pub mod workspaces;
 use std::{fs, process::Command};
 pub const CONFIG: &str = "/etc/tend/settings.json";

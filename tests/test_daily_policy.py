@@ -19,6 +19,7 @@ def load(name, path):
 
 policy = load('daily_policy', ROOT / 'assets/tend_cleanup_policy.py')
 installer = load('policy_installer', ROOT / 'scripts/install-policy.py')
+history = load('maintenance_history', ROOT / 'assets/tend_maintenance_history.py')
 
 class DailyPolicyTests(unittest.TestCase):
     def setUp(self):
@@ -99,6 +100,8 @@ class DailyPolicyTests(unittest.TestCase):
         module=types.ModuleType('staged_maintenance')
         old=sys.modules.get('tend_cleanup_policy')
         sys.modules['tend_cleanup_policy']=policy
+        old_history=sys.modules.get('tend_maintenance_history')
+        sys.modules['tend_maintenance_history']=history
         try:
             exec(compile(installer.patch_engine(source.read_text()),'staged_engine','exec'),module.__dict__)
             module.run_command=self.run;module.as_user=self.user
@@ -119,6 +122,8 @@ class DailyPolicyTests(unittest.TestCase):
         finally:
             if old is None:sys.modules.pop('tend_cleanup_policy',None)
             else:sys.modules['tend_cleanup_policy']=old
+            if old_history is None:sys.modules.pop('tend_maintenance_history',None)
+            else:sys.modules['tend_maintenance_history']=old_history
 
     def test_engine_patch_preserves_schedule_and_non_cleanup_behavior(self):
         # A sanitized supported-engine fixture; compiling executes nothing.

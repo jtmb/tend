@@ -14,14 +14,14 @@ pub struct Capabilities {
 }
 pub fn for_role(role: &'static str) -> Capabilities {
     Capabilities {
-        protocol: 3,
+        protocol: 4,
         version: env!("CARGO_PKG_VERSION"),
         role,
         structured_observations: role == "worker",
         bounded_history: role == "worker",
         cleanup_exclusions: role == "worker" || role == "administrator",
         explained_cleanup: role == "worker" || role == "administrator",
-        maintenance_events: false,
+        maintenance_events: role=="worker"||role=="administrator",
     }
 }
 pub fn json(role: &'static str) -> String {

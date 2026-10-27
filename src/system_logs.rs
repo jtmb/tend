@@ -4,6 +4,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read},
     process::Command,
+    os::unix::fs::OpenOptionsExt,
 };
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Entry {
@@ -15,7 +16,7 @@ pub struct Entry {
     pub details: String,
 }
 fn string(v: &Value, key: &str) -> String {
-    v[key].as_str().unwrap_or("").into()
+    v[key].as_str().unwrap_or("").chars().take(1024).collect()
 }
 pub fn decode(line: &str) -> Option<Entry> {
     let v: Value = serde_json::from_str(line).ok()?;
@@ -49,7 +50,8 @@ pub fn decode(line: &str) -> Option<Entry> {
         string(&v, "SYSLOG_IDENTIFIER")
     };
     let message = if let Some(s) = v["MESSAGE"].as_str() {
-        s.to_owned()
+        let mut end=s.len().min(32*1024);while !s.is_char_boundary(end) {end-=1;}
+        format!("{}{}",&s[..end],if end<s.len(){"\n[Message truncated to 32 KiB]"}else{""})
     } else {
         "Binary message omitted".into()
     };
@@ -116,18 +118,19 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
     if source == 2 {
         cmd.arg("MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1");
     }
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).into());
-    }
-    let mut entries: Vec<_> = String::from_utf8_lossy(&out.stdout)
+    let out = crate::queries::run(&mut cmd,std::time::Duration::from_secs(15),8*1024*1024)?;
+    let mut entries: Vec<_> = out
         .lines()
         .filter_map(decode)
         .collect();
     if source == 2 {
         if let Ok(files) = fs::read_dir("/var/crash") {
-            for file in files.flatten().take(1000) {
-                let p = file.path();
+            let mut reports:Vec<_>=files.flatten().take(1000).map(|f|f.path()).filter_map(|p|{
+                let m=fs::symlink_metadata(&p).ok()?;
+                (m.is_file()&&!m.file_type().is_symlink()&&p.extension().and_then(|s|s.to_str())==Some("crash")).then(||(m.modified().ok(),p))
+            }).collect();
+            reports.sort_by_key(|(time,_)|std::cmp::Reverse(*time));
+            for (_,p) in reports.into_iter().take(100) {
                 if p.extension().and_then(|s| s.to_str()) != Some("crash") {
                     continue;
                 }
@@ -137,11 +140,12 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
                 {
                     continue;
                 }
-                let Ok(file) = fs::File::open(&p) else {
+                let Ok(file) = fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_NONBLOCK).open(&p) else {
                     continue;
                 };
+                if !file.metadata().is_ok_and(|m|m.is_file()) {continue;}
                 let mut fields = std::collections::HashMap::new();
-                for line in BufReader::new(file.take(256 * 1024)).lines().take(2000) {
+                for line in BufReader::new(file.take(64 * 1024)).lines().take(1000) {
                     let Ok(line) = line else { break };
                     if line.starts_with("CoreDump:") {
                         break;

@@ -1,6 +1,6 @@
 use crate::{
     output,
-    workstation::{home, private_write, record, state_dir},
+    workstation::{audit_action, home, private_write, state_dir},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -93,8 +93,7 @@ pub fn restore(index: usize) -> Result<String, String> {
         &state_dir().join("undo.json"),
         &serde_json::to_string_pretty(&entries).unwrap(),
     )?;
-    record("undo", &u.label)?;
-    Ok(format!("Restored {}", u.label))
+    audit_action("undo",&u.label,Ok(format!("Restored {}", u.label)))
 }
 pub fn animations(enabled: bool) -> Result<String, String> {
     let schema = "org.gnome.desktop.interface";
@@ -113,8 +112,7 @@ pub fn animations(enabled: bool) -> Result<String, String> {
         "/usr/bin/gsettings",
         &["set", schema, key, if enabled { "true" } else { "false" }],
     )?;
-    record("settings", &format!("Desktop animations: {enabled}"))?;
-    Ok("Applied. Previous value is available in Recovery.".into())
+    audit_action("settings",&format!("Desktop animations: {enabled}"),Ok("Applied. Previous value is available in Recovery.".into()))
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Startup {
@@ -207,8 +205,7 @@ pub fn set_startup(id: &str, enabled: bool) -> Result<String, String> {
         if enabled { "true" } else { "false" },
     );
     private_write(&dest, &s)?;
-    record("startup", &format!("{} enabled={enabled}", entry.title))?;
-    Ok("Saved for your next login. Existing applications remain running.".into())
+    audit_action("startup",&format!("{} enabled={enabled}", entry.title),Ok("Saved for your next login. Existing applications remain running.".into()))
 }
 fn validate_unit(unit: &str) -> Result<(), String> {
     if unit.contains('/')
@@ -274,8 +271,7 @@ pub fn set_unit(unit: &str, enable: bool) -> Result<String, String> {
         "/usr/bin/systemctl",
         &["--user", if enable { "enable" } else { "disable" }, unit],
     )?;
-    record("service", &format!("{unit} enabled={enable}"))?;
-    Ok("Future activation changed. No service was started or stopped.".into())
+    audit_action("service",&format!("{unit} enabled={enable}"),Ok("Future activation changed. No service was started or stopped.".into()))
 }
 pub fn wayland(id: &str) -> Result<String, String> {
     if !["chatgpt.desktop", "code.desktop"].contains(&id) {
@@ -300,11 +296,7 @@ pub fn wayland(id: &str) -> Result<String, String> {
         &target,
         &replace_key(&s, "Exec", &format!("{exec} --ozone-platform=wayland")),
     )?;
-    record(
-        "graphics",
-        &format!("{id}: native Wayland requested for next launch"),
-    )?;
-    Ok("Saved for the next full application launch. Quit/reopen the app when your work is saved. Recovery restores the original launcher.".into())
+    audit_action("graphics",&format!("{id}: native Wayland requested for next launch"),Ok("Saved for the next full application launch. Quit/reopen the app when your work is saved. Recovery restores the original launcher.".into()))
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

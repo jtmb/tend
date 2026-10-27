@@ -16,26 +16,34 @@ from datetime import datetime, timezone
 REPO = Path(__file__).resolve().parents[1]
 ENGINE = '/usr/local/lib/dev-maintenance/dev-maintenance.py'
 MODULE = '/usr/local/lib/dev-maintenance/tend_cleanup_policy.py'
+HISTORY_MODULE = '/usr/local/lib/dev-maintenance/tend_maintenance_history.py'
+HISTORY_READY = '/etc/tend/history-ready'
 HELPER = '/usr/local/libexec/tend-admin'
 WORKER = '/usr/local/libexec/tend-worker'
 READY = '/etc/tend/cleanup-policy-ready'
 EXCLUSION_CONFIG='/etc/tend/exclusions.json'
 EXCLUSION_LOCK='/etc/tend/exclusions.lock'
 EXCLUSION_READY='/etc/tend/exclusions-ready'
-TARGETS = (ENGINE, MODULE, HELPER, WORKER, READY, EXCLUSION_CONFIG, EXCLUSION_LOCK, EXCLUSION_READY)
+TARGETS = (ENGINE, MODULE, HISTORY_MODULE, HISTORY_READY, HELPER, WORKER, READY, EXCLUSION_CONFIG, EXCLUSION_LOCK, EXCLUSION_READY)
 MARKER = '# Tend cleanup integration v1'
+HISTORY_MARKER = '# Tend maintenance events v1'
 
 
 def release_capabilities():
     """Reject mixed releases before writing any readiness marker."""
     commands=[(REPO/'target/release/tend-admin','administrator'),
               (REPO/'target/release/tend-worker','worker'),
-              (REPO/'assets/tend_cleanup_policy.py','maintenance-adapter')]
+              (REPO/'assets/tend_cleanup_policy.py','maintenance-adapter'),
+              (REPO/'assets/tend_maintenance_history.py','maintenance-history')]
     for path,role in commands:
-        args=[sys.executable,str(path),'--capabilities'] if role=='maintenance-adapter' else [str(path),'capabilities']
+        args=[sys.executable,str(path),'--capabilities'] if role in ('maintenance-adapter','maintenance-history') else [str(path),'capabilities']
         result=subprocess.run(args,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=3)
         value=json.loads(result.stdout) if result.returncode==0 and len(result.stdout)<=8192 else {}
-        if not isinstance(value,dict) or type(value.get('protocol')) is not int or value['protocol']<3 or value.get('role')!=role or value.get('cleanup_exclusions') is not True or value.get('explained_cleanup') is not True:
+        if role=='maintenance-history':
+            valid=isinstance(value,dict) and type(value.get('protocol')) is int and value['protocol']>=4 and value.get('role')==role and value.get('maintenance_events') is True
+        else:
+            valid=isinstance(value,dict) and type(value.get('protocol')) is int and value['protocol']>=4 and value.get('role')==role and value.get('cleanup_exclusions') is True and value.get('explained_cleanup') is True and value.get('maintenance_events') is True
+        if not valid:
             raise ValueError('Build a matching exclusions-capable release before installation: '+str(path))
 
 
@@ -51,7 +59,7 @@ def saved_exclusions(path):
     return namespace['validate_exclusions'](json.loads(raw))
 
 
-def patch_engine(original):
+def patch_cleanup_engine(original):
     if MARKER in original:
         # Never duplicate integration or silently accept an unknown revision.
         if original.count(MARKER) != 1:
@@ -88,6 +96,41 @@ def _tend_legacy_execute_phase(name, state, now=None):'''
         if candidate.count(old) != 1:
             raise ValueError('Installed engine differs from the supported layout: ' + old[:75])
         candidate = candidate.replace(old, new, 1)
+    compile(candidate, ENGINE, 'exec')
+    return candidate
+
+
+def patch_engine(original):
+    candidate = patch_cleanup_engine(original)
+    if '# Tend maintenance events ' in candidate:
+        if candidate.count(HISTORY_MARKER) != 1 or candidate.count('_tend_history.run_phase(') != 1:
+            raise ValueError('Unexpected existing maintenance history integration')
+        compile(candidate, ENGINE, 'exec')
+        return candidate
+    old = '''            try:
+                if name == "health":
+                    state["health"] = health_report()
+                    phase_status, message = "success", "Health observations recorded"
+                else:
+                    phase_status, message = execute_phase(name, state, now, cleanup_policy)
+            except Exception as exc:
+                phase_status, message = "failed", type(exc).__name__ + ": " + str(exc)'''
+    new = '''            def _tend_phase_action():
+                if name == "health":
+                    state["health"] = health_report()
+                    phase_status, message = "success", "Health observations recorded"
+                else:
+                    phase_status, message = execute_phase(name, state, now, cleanup_policy)
+                return phase_status, message
+            phase_status, message = _tend_history.run_phase(
+                state_dir, name, window, entry["attempts"], _tend_phase_action, entry)'''
+    if candidate.count(old) != 1 or candidate.count('import tend_cleanup_policy as _tend_cleanup') != 1:
+        raise ValueError('Installed engine differs from the supported phase execution layout')
+    candidate = candidate.replace(old,new,1).replace('import tend_cleanup_policy as _tend_cleanup',
+        'import tend_cleanup_policy as _tend_cleanup\n'+HISTORY_MARKER+'\nimport tend_maintenance_history as _tend_history',1)
+    stamp='entry["last_success"] = time.time()'
+    if candidate.count(stamp)!=1:raise ValueError('Unsupported maintenance success timestamp layout')
+    candidate=candidate.replace(stamp,'entry["last_success"] = entry.pop("tend_recorded_success_unix", time.time())',1)
     compile(candidate, ENGINE, 'exec')
     return candidate
 
@@ -160,6 +203,10 @@ def main():
             saved=saved_exclusions(policy_path)
             if any(p['enabled'] for p in saved['paths']):
                 raise SystemExit('Disable all shared exclusions explicitly before rolling back their enforcement integration.')
+        namespace={'__name__':'tend_installer_receipt_validator'}
+        source=(REPO/'assets/tend_maintenance_history.py').read_text()
+        exec(compile(source,'tend_maintenance_history.py','exec'),namespace)
+        namespace['check_rollback'](destination(root,'/var/lib/dev-maintenance'),0 if root==Path('/') else os.geteuid())
         manifest = json.loads(args.rollback.read_text())
         if manifest.get('root') != str(root):
             raise SystemExit('Rollback root mismatch')
@@ -182,18 +229,19 @@ def main():
         original = engine.read_text()
         candidate = patch_engine(original)
         changes = {
-            engine: (candidate.encode(), stat.S_IMODE(engine.stat().st_mode)),
             destination(root, MODULE): ((REPO/'assets/tend_cleanup_policy.py').read_bytes(), 0o644),
+            destination(root, HISTORY_MODULE): ((REPO/'assets/tend_maintenance_history.py').read_bytes(), 0o644),
             destination(root, HELPER): ((REPO/'target/release/tend-admin').read_bytes(), 0o755),
             destination(root, WORKER): ((REPO/'target/release/tend-worker').read_bytes(), 0o755),
-            destination(root, READY): (b'1\n', 0o644),
         }
         # Keep the lock inode and existing policy unchanged on repeat upgrades.
         for name,data in [(EXCLUSION_LOCK,b''),(EXCLUSION_CONFIG,b'{"version":1,"revision":0,"paths":[]}\n')]:
             path=destination(root,name);protected(path,root)
             if not path.exists():changes[path]=(data,0o644)
-        changes[destination(root,EXCLUSION_READY)]=(b'1\n',0o644)
+        changes[engine]=(candidate.encode(),stat.S_IMODE(engine.stat().st_mode))
+        for name in (READY,EXCLUSION_READY,HISTORY_READY):changes[destination(root,name)]=(b'1\n',0o644)
         compile(changes[destination(root, MODULE)][0], MODULE, 'exec')
+        compile(changes[destination(root, HISTORY_MODULE)][0], HISTORY_MODULE, 'exec')
     for path in changes:
         protected(path, root)
         print(('APPLY ' if args.apply else 'DRY RUN ') + str(path))

@@ -220,6 +220,6 @@ def _execute(name, state, policy, run_command, as_user, apt_locks_busy, npm_busy
 if __name__=='__main__':
     import sys
     if sys.argv[1:]==['--capabilities']:
-        print(json.dumps(dict(protocol=3,role='maintenance-adapter',cleanup_exclusions=True,explained_cleanup=True,maintenance_events=False)))
+        print(json.dumps(dict(protocol=4,role='maintenance-adapter',cleanup_exclusions=True,explained_cleanup=True,maintenance_events=True)))
     else:
         raise SystemExit('Only read-only --capabilities is supported directly')

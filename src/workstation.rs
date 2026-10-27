@@ -78,16 +78,33 @@ pub fn private_write(path: &Path, text: &str) -> Result<(), String> {
     fs::rename(tmp, path).map_err(|e| e.to_string())
 }
 pub fn record(kind: &str, text: &str) -> Result<(), String> {
-    let dir = state_dir().join("reports");
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("{}-{kind}.json", artifact_id()));
-    private_write(
-        &path,
-        &serde_json::to_string_pretty(
-            &serde_json::json!({"time_unix":now(),"kind":kind,"report":text}),
-        )
-        .unwrap(),
-    )
+    record_outcome(kind,text,None)
+}
+fn record_outcome(kind: &str, text: &str, success: Option<bool>) -> Result<(),String> {
+    let mut end=text.len().min(32*1024);
+    while !text.is_char_boundary(end) {end-=1;}
+    let time_ms=SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+    let payload=serde_json::json!({"version":1,"kind":kind,"report":&text[..end],"truncated":end<text.len(),"original_bytes":text.len(),"success":success});
+    crate::history::History::open()?.insert(&format!("report:{}",artifact_id()),&format!("report/{kind}"),time_ms,crate::observations::boot_id(),&payload)?;
+    Ok(())
+}
+/// Audit is secondary to an action's actual result. A missing report must not
+/// turn a completed operation into a failure that callers retry.
+pub fn audit_result(kind: &str, result: Result<String,String>) -> Result<String,String> {
+    let saved=record_outcome(kind,match &result {Ok(s)|Err(s)=>s},Some(result.is_ok()));
+    finish_audit(result,saved)
+}
+pub fn audit_action(kind: &str, details: &str, result: Result<String,String>) -> Result<String,String> {
+    let saved=record_outcome(kind,details,Some(result.is_ok()));
+    finish_audit(result,saved)
+}
+fn finish_audit(result: Result<String,String>, saved: Result<(),String>) -> Result<String,String> {
+    let success=result.is_ok();
+    let mut report=match result {Ok(s)|Err(s)=>s};
+    if let Err(error)=saved {
+        report.push_str(&format!("\nThe operation result is above; history could not be saved: {error}"));
+    }
+    if success {Ok(report)} else {Err(report)}
 }
 pub fn available() -> u64 {
     output("/usr/bin/df", &["-B1", "--output=avail", "/"])
@@ -623,6 +640,9 @@ pub fn cleanup_user(c: &Cleanup) -> Result<String, String> {
     crate::cleanup_plan::Plan::build(c, &crate::cleanup_rules::Policy::default(), false)?
         .execute_user()
 }
+pub fn cleanup_daily(c: &Cleanup)->Result<String,String> {
+    crate::cleanup_plan::Plan::build(c,&crate::cleanup_rules::Policy::default(),false)?.execute_daily()
+}
 #[derive(Clone, Default, Serialize)]
 pub struct Sample {
     pub time: u64,
@@ -824,12 +844,7 @@ pub fn verify_npm() -> Result<String, String> {
         String::from_utf8_lossy(&r.stdout),
         String::from_utf8_lossy(&r.stderr)
     );
-    record("npm-verify", &text)?;
-    if r.status.success() {
-        Ok(text)
-    } else {
-        Err(text)
-    }
+    audit_result("npm-verify",if r.status.success() {Ok(text)} else {Err(text)})
 }
 pub fn development_report() -> Result<String, String> {
     let mut s = String::new();
@@ -964,16 +979,12 @@ pub fn signal_process(p: &Process, force: bool) -> Result<String, String> {
     if result < 0 {
         return Err(std::io::Error::last_os_error().to_string());
     }
-    record(
-        "process",
-        &format!(
-            "{} requested for {} ({})",
+    audit_result("process",Ok(format!(
+            "{} requested for {} ({}). Application recovery depends on the app.",
             if force { "Force quit" } else { "Quit" },
             p.name,
             p.pid
-        ),
-    )?;
-    Ok("Signal sent; application recovery depends on the app.".into())
+        )))
 }
 
 pub fn export_report(text: &str, json: bool) -> Result<String, String> {
@@ -994,18 +1005,29 @@ pub fn export_report(text: &str, json: bool) -> Result<String, String> {
     Ok(format!("Saved {}", p.display()))
 }
 pub fn history() -> Result<String, String> {
+    let mut text=String::new();
+    match crate::history::History::existing() {
+        Ok(Some(store))=>for event in store.reports(40,None)?.events {
+            text.push_str(&format!("{} · {}\n{}{}\n\n",crate::presentation::when(event.time_ms/1000),event.payload["kind"].as_str().unwrap_or("report"),event.payload["report"].as_str().unwrap_or("No report text"),if event.payload["truncated"]==true {"\nReport truncated to the history limit."}else{""}));
+        },
+        Ok(None)=>{},Err(e)=>text.push_str(&format!("Saved history unavailable: {e}\n\n")),
+    }
     if !state_dir().join("reports").exists() {
-        return Ok("No Tend reports have been saved yet.".into());
+        return Ok(if text.is_empty() {"No Tend reports have been saved yet.".into()}else{text});
     }
     let mut paths: Vec<_> = fs::read_dir(state_dir().join("reports"))
         .map_err(|e| e.to_string())?
         .flatten()
+        .take(5000)
         .map(|e| e.path())
         .collect();
     paths.sort();
-    let mut text = String::new();
+    text.push_str("Legacy reports · original files retained; at most 40 of 5,000 discovered files\n\n");
     for p in paths.iter().rev().take(40) {
-        if let Ok(raw) = fs::read_to_string(p) {
+        use std::io::Read;
+        if !fs::symlink_metadata(p).is_ok_and(|m|m.is_file()&&!m.file_type().is_symlink()&&m.uid()==unsafe {libc::geteuid()}) {continue;}
+        if let Ok(file) = fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_NONBLOCK).open(p) {
+            let mut raw=String::new();if file.take(256*1024+1).read_to_string(&mut raw).is_err()||raw.len()>256*1024 {continue;}
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
                 let when = value["time_unix"]
                     .as_i64()
@@ -1051,6 +1073,13 @@ pub fn run_with_input(program: &str, args: &[&str], input: &str) -> Result<Strin
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+    #[test]
+    fn audit_errors_never_replace_the_actual_operation_result() {
+        let ok=finish_audit(Ok("Fixture completed".into()),Err("Fixture history failure".into())).unwrap();
+        assert!(ok.starts_with("Fixture completed")&&ok.contains("history could not be saved"));
+        let failed=finish_audit(Err("Fixture operation failed".into()),Err("Fixture history failure".into())).unwrap_err();
+        assert!(failed.starts_with("Fixture operation failed"));
+    }
     use std::os::unix::{ffi::OsStrExt, fs::symlink};
     #[test]
     fn repeated_report_ids_are_unique_even_with_parallel_completions() {

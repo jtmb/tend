@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sqlite3
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -20,7 +21,8 @@ POLICY=dict(version=1,apt=True,docker_build=True,docker_images=True,npm_logs=Tru
 class WorkerContracts(unittest.TestCase):
     def setUp(self):
         Path('/tmp/opencode').mkdir(exist_ok=True)
-        self.root=Path(tempfile.mkdtemp(prefix='tend-worker-qa-',dir='/tmp/opencode'))
+        parent=Path(os.environ.get('TEND_TEST_FIXTURES','/tmp/opencode'));parent.mkdir(parents=True,exist_ok=True)
+        self.root=Path(tempfile.mkdtemp(prefix='tend-worker-qa-',dir=parent))
         self.home=self.root/'home';self.home.mkdir()
         self.bin=self.root/'bin';self.bin.mkdir()
         self.env={k:v for k,v in os.environ.items() if not k.startswith('TEND_')}
@@ -49,9 +51,12 @@ class WorkerContracts(unittest.TestCase):
         result=self.run_worker('daily-phase','npm-cache',json.dumps(POLICY))
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('fixture npm: cache verify',result.stdout)
-        reports=list((self.home/'.local/state/tend/reports').glob('*.json'))
+        with sqlite3.connect('file:'+str(self.home/'.local/state/tend/history.sqlite3')+'?mode=ro',uri=True) as db:
+            reports=db.execute("SELECT kind,payload FROM events WHERE kind='report/npm-verify'").fetchall()
         self.assertEqual(len(reports),1)
-        self.assertEqual(json.loads(reports[0].read_text())['kind'],'npm-verify')
+        self.assertEqual(json.loads(reports[0][1])['kind'],'npm-verify')
+        self.assertTrue(json.loads(reports[0][1])['success'])
+        self.assertFalse((self.home/'.local/state/tend/reports').exists())
 
     def test_opencode_npm_has_its_sibling_node_on_path(self):
         npm=self.home/'.opencode/bin/npm'
@@ -77,6 +82,26 @@ class WorkerContracts(unittest.TestCase):
                 self.assertNotEqual(self.run_worker(*args,data=data).returncode,0)
         self.assertEqual(self.run_worker('scheduled').stdout.strip(),'Cleanup schedule disabled.')
         self.assertFalse((self.home/'.local/state/tend/scheduled-cleanup.json').exists())
+
+    def test_activity_query_is_readonly_and_validates_filter_arguments(self):
+        result=self.run_worker('activity',json.dumps(dict(source=2)))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['events'],[])
+        self.assertFalse((self.home/'.local/state/tend').exists())
+        for query in (dict(source=4),dict(search='x'*241),dict(command='reboot')):
+            self.assertNotEqual(self.run_worker('activity',json.dumps(query)).returncode,0)
+        caps=json.loads(self.run_worker('capabilities').stdout)
+        self.assertGreaterEqual(caps['protocol'],4);self.assertTrue(caps['maintenance_events'])
+
+    def test_history_failure_does_not_change_a_successful_npm_result(self):
+        self.script(self.bin/'npm','#!/bin/sh\nprintf "fixture verified once\\n"\n')
+        path=self.home/'.local/state/tend/history.sqlite3';path.parent.mkdir(parents=True)
+        path.parent.chmod(0o700);path.write_bytes(b'preserved corrupt history');path.chmod(0o600)
+        result=self.run_worker('daily-phase','npm-cache',json.dumps(POLICY))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('fixture verified once',result.stdout)
+        self.assertIn('history could not be saved',result.stdout)
+        self.assertEqual(path.read_bytes(),b'preserved corrupt history')
 
 
 if __name__=='__main__':unittest.main()

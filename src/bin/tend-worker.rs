@@ -9,6 +9,12 @@ fn main() {
 fn run() -> Result<(), String> {
     match std::env::args().nth(1).as_deref() {
         Some("capabilities" | "--capabilities") => println!("{}", tend::capabilities::json("worker")),
+        Some("activity") => {
+            let input=std::env::args().nth(2).unwrap_or_else(||"{}".into());
+            if input.len()>4096 {return Err("Activity query exceeds 4 KiB".into());}
+            let query:tend::activity::Query=serde_json::from_str(&input).map_err(|e|e.to_string())?;
+            println!("{}",serde_json::to_string(&tend::activity::load(&query,None)?).map_err(|e|e.to_string())?);
+        }
         Some("observe") => {
             let hub=tend::sampler::Hub::new();
             let sample=hub.request(tend::sampler::Detail::Basic).wait(std::time::Duration::from_secs(10))
@@ -49,7 +55,7 @@ fn run() -> Result<(), String> {
                     policy.user_phase(&phase)?;
                     println!("{}", w::daily_npm_logs(policy.npm_log_days)?);
                 }
-                _ => println!("{}", w::cleanup_user(&policy.user_phase(&phase)?)?),
+                _ => println!("{}", w::cleanup_daily(&policy.user_phase(&phase)?)?),
             }
         }
         Some("scheduled") => {

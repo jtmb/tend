@@ -35,6 +35,10 @@ fn protected(root: &Path, home: &Path) -> bool {
     if root == home || !root.starts_with(home) {
         return true;
     }
+    let state=home.join(".local/state/tend");
+    if root.starts_with(&state)||state.canonicalize().is_ok_and(|path|root.starts_with(path)) {
+        return true;
+    }
     let Some(rel) = root.strip_prefix(home).ok() else {
         return true;
     };
@@ -88,7 +92,7 @@ impl Rule {
             || m.uid() != unsafe { libc::geteuid() }
             || protected(&path, &home)
         {
-            return Err("Choose a specific user-owned folder inside your home. Credentials, configuration, repositories and dependency directories are protected.".into());
+            return Err("Choose a specific user-owned folder inside your home. Credentials, configuration, repositories, dependency directories and Tend’s own state are protected.".into());
         }
         Ok(())
     }
@@ -202,47 +206,8 @@ pub fn preview(p: &Policy) -> Result<String, String> {
     Ok(text)
 }
 pub fn apply(p: &Policy) -> Result<String, String> {
-    #[cfg(feature = "docs-demo")]
-    if std::env::var_os("TEND_DEMO_DIR").is_some() {
-        return Err("Deletion is disabled in documentation recordings.".into());
-    }
-    let exclusions = crate::exclusions::Guard::acquire()?;
-    let mut text = String::new();
-    let mut failed = false;
-    for r in p.rules.iter().filter(|r| r.enabled) {
-        match candidates(r) {
-            Ok(files) => {
-                let root = r.folder.canonicalize().map_err(|e| e.to_string())?;
-                let mut count = 0;
-                let mut errors = 0;
-                for f in files {
-                    match w::remove_old_file_guarded(&root, &f, r.days, &exclusions.compiled, None)
-                    {
-                        Ok(true) => count += 1,
-                        Ok(false) => {}
-                        Err(_) => errors += 1,
-                    }
-                }
-                if errors > 0 {
-                    failed = true;
-                }
-                text.push_str(&format!(
-                    "{}: {count} files removed; {errors} failures\n",
-                    r.name
-                ));
-            }
-            Err(e) => {
-                failed = true;
-                text.push_str(&format!("{}: skipped: {e}\n", r.name));
-            }
-        }
-    }
-    w::record("custom-cleanup", &text)?;
-    if failed {
-        Err(text)
-    } else {
-        Ok(text)
-    }
+    let cleanup=w::Cleanup {apt:false,docker_build:false,docker_images:false,npm_logs:false,pip:false,thumbnails:false,trash:false,..Default::default()};
+    w::audit_result("custom-cleanup",crate::cleanup_plan::Plan::build(&cleanup,p,false)?.execute_unrecorded())
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -459,7 +424,9 @@ impl Schedule {
         })
     }
 }
-pub fn cleanup_lock() -> Result<fs::File, String> {
+pub struct CleanupLock(fs::File);
+impl Drop for CleanupLock {fn drop(&mut self) {let _=FileExt::unlock(&self.0);}}
+pub fn cleanup_lock() -> Result<CleanupLock, String> {
     fs::create_dir_all(w::state_dir()).map_err(|e| e.to_string())?;
     let f = fs::OpenOptions::new()
         .create(true)
@@ -471,7 +438,7 @@ pub fn cleanup_lock() -> Result<fs::File, String> {
         .map_err(|e| e.to_string())?;
     f.try_lock_exclusive()
         .map_err(|_| "Another cleanup or schedule change is in progress".to_string())?;
-    Ok(f)
+    Ok(CleanupLock(f))
 }
 pub fn run_custom(p: &Policy) -> Result<String, String> {
     let _lock = cleanup_lock()?;
@@ -484,6 +451,23 @@ pub fn scheduled_preview() -> Result<String, String> {
         "{}\nAPT runs only in daily system maintenance.",
         w::cleanup_preview(&c)?
     ))
+}
+fn read_scheduled_state(path:&Path)->Result<serde_json::Value,String> {
+    use std::io::Read;
+    let file=match fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_NONBLOCK).open(path) {
+        Ok(file)=>file,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(serde_json::json!({})),Err(e)=>return Err(format!("Cleanup receipt unavailable; nothing repeated: {e}")),
+    };
+    let m=file.metadata().map_err(|e|e.to_string())?;
+    if !m.is_file()||m.uid()!=unsafe {libc::geteuid()}||m.mode()&0o077!=0 {return Err("Cleanup receipt must be a private, user-owned regular file.".into());}
+    let mut text=String::new();file.take(64*1024+1).read_to_string(&mut text).map_err(|e|e.to_string())?;
+    if text.len()>64*1024 {return Err("Cleanup receipt exceeds 64 KiB; existing file preserved.".into());}
+    let state:serde_json::Value=serde_json::from_str(&text).map_err(|e|format!("Invalid cleanup receipt; nothing repeated: {e}"))?;
+    let object=state.as_object().ok_or("Invalid cleanup receipt object")?;
+    let allowed=["last_due","failed_due","attempts","report","finished_unix","running_due","started_unix","duration_ms","previous_uncertain_due"];
+    if object.keys().any(|key|!allowed.contains(&key.as_str()))||object.iter().any(|(key,v)|if key=="report" {!v.is_string()}else {!v.is_null()&&v.as_u64().is_none()})||state["attempts"].as_u64().is_some_and(|n|n>3) {
+        return Err("Invalid cleanup receipt fields; existing file preserved.".into());
+    }
+    Ok(state)
 }
 pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     let s = Schedule::load()?;
@@ -501,10 +485,13 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     let _lock = cleanup_lock()?;
     let _exclusions = crate::exclusions::Guard::acquire()?;
     let path = w::state_dir().join("scheduled-cleanup.json");
-    let mut state: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut state=read_scheduled_state(&path)?;
+    if ["last_due","failed_due","running_due"].iter().any(|key|state[*key].as_i64().is_some_and(|seen|seen>due)) {
+        return Err("The clock moved before a recorded cleanup date. No cleanup was repeated.".into());
+    }
+    if state["running_due"].as_i64()==Some(due) {
+        return Err("The previous cleanup outcome is uncertain. Review its receipt before rerunning; no automatic replay was performed.".into());
+    }
     if state["last_due"].as_i64() == Some(due) {
         return Ok("Latest due cleanup already completed.".into());
     }
@@ -537,13 +524,18 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     let mut c = w::Cleanup::load()?;
     let apt = c.apt;
     c.apt = false;
-    let mut report = String::from("Scheduled user cleanup\n");
+    let attempt=if state["failed_due"].as_i64()==Some(due) {state["attempts"].as_u64().unwrap_or(0)+1}else {1};
+    let mut report=format!("Scheduled user cleanup\nDue: {}\nStarted: {}\nAttempt {attempt} of 3\nDelay from schedule: {:.1} minutes\n",crate::presentation::when(due),crate::presentation::when(now),(now-due).max(0) as f64/60.);
+    if let Some(old)=state["running_due"].as_i64() {state["previous_uncertain_due"]=old.into();report.push_str("An earlier maintenance date has an uncertain result; this run processes only the latest due date.\n");}
+    state["running_due"]=due.into();state["started_unix"]=now.into();
+    w::private_write(&path,&serde_json::to_string_pretty(&state).map_err(|e|e.to_string())?)?;
+    let started=crate::observations::boot_millis();
     if apt {
         report.push_str("APT cache remains handled by the existing system maintenance job.\n");
     }
     let mut success = true;
     for result in
-        [crate::cleanup_plan::Plan::build(&c, &policy, false).and_then(|p| p.execute_user())]
+        [crate::cleanup_plan::Plan::build(&c, &policy, false).and_then(|p| p.execute_unrecorded())]
     {
         match result {
             Ok(s) => report.push_str(&s),
@@ -565,19 +557,28 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
         state["failed_due"] = due.into();
         state["attempts"] = attempts.into();
     }
-    state["report"] = report.clone().into();
-    state["finished_unix"] = now.into();
-    w::private_write(&path, &serde_json::to_string_pretty(&state).unwrap())?;
-    w::record("scheduled-cleanup", &report)?;
-    if success {
-        Ok(report)
-    } else {
-        Err(report)
+    state.as_object_mut().unwrap().remove("running_due");
+    let duration=started.zip(crate::observations::boot_millis()).and_then(|(a,b)|b.checked_sub(a));
+    state["duration_ms"]=duration.into();state["finished_unix"]=w::now().into();
+    if let Some(duration)=duration {report.push_str(&format!("\nElapsed: {:.1} seconds",duration as f64/1000.));}
+    let mut end=report.len().min(8192);while !report.is_char_boundary(end) {end-=1;}
+    state["report"]=format!("{}{}",&report[..end],if end<report.len(){"\nReceipt report truncated; saved history may contain more."}else{""}).into();
+    if let Err(error)=w::private_write(&path,&serde_json::to_string_pretty(&state).map_err(|e|e.to_string())?) {
+        report.push_str(&format!("\nThe operation result is above; its completed receipt could not be saved: {error}. The running receipt blocks automatic replay for this date."));
     }
+    w::audit_result("scheduled-cleanup",if success {Ok(report)}else {Err(report)})
+
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cleanup_rules_cannot_remove_tend_receipts_or_live_history() {
+        let home=Path::new("/home/fixture");
+        assert!(protected(&home.join(".local/state/tend"),home));
+        assert!(protected(&home.join(".local/state/tend/history.sqlite3"),home));
+        assert!(!protected(&home.join(".local/state/fixture-cache"),home));
+    }
     #[test]
     fn simple_cron_editor_is_lossless_and_conservative() {
         for (expression, expected) in [

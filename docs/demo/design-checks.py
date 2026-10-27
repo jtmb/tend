@@ -12,7 +12,7 @@ import subprocess
 import resource
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup'])
+parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity'])
 parser.add_argument('--parent',type=Path,default=Path('/tmp/opencode'),help='Retained fixture directory; history tests require at least 2 GiB free')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
@@ -54,6 +54,31 @@ elif args.mode == 'expansion':
 elif args.mode == 'cleanup':
     run('cleanup',['target/debug/tend'],{'TEND_CLEANUP_QA':str(root/'cleanup')},screen='1600x1000x24')
     print((root/'cleanup/cleanup-evidence.json').read_text(),flush=True)
+elif args.mode == 'activity':
+    import datetime as dt
+    import importlib.util
+    from zoneinfo import ZoneInfo
+    spec=importlib.util.spec_from_file_location('demo_maintenance_history',repo/'assets/tend_maintenance_history.py')
+    history=importlib.util.module_from_spec(spec);spec.loader.exec_module(history)
+    state=root/'home/.local/state/tend';state.mkdir(parents=True,exist_ok=True);state.chmod(0o700)
+    local=dt.datetime.now(ZoneInfo('America/Toronto'))
+    last=local.date() if (local.hour,local.minute)>=(8,15) else local.date()-dt.timedelta(days=1)
+    clock={'wall':0,'boot':1000000,'free':8_000_000_000}
+    with history.PhaseHistory(state,owner=os.geteuid(),wall_ms=lambda:clock['wall'],boot_ms=lambda:clock['boot'],boot_id=lambda:'fixture-boot',free=lambda:clock['free']) as writer:
+        for i in range(25):
+            day=last-dt.timedelta(days=24-i)
+            base=int(dt.datetime.combine(day,dt.time(8),ZoneInfo('America/Toronto')).timestamp()*1000)
+            for n,phase in enumerate(history.PHASES):
+                for attempt in (1,2):
+                    clock['wall']=base+n*60000+attempt*2000;clock['boot']+=5000
+                    ticket,previous=writer.begin(phase,day.isoformat(),attempt,scheduled=base)
+                    assert previous is None
+                    if i==24 and phase=='health' and attempt==2:continue
+                    clock['wall']+=1000;clock['boot']+=1000;clock['free']+=1024
+                    writer.finish(ticket,'success' if attempt==2 else 'failed',f'Fixture {phase} outcome; no operation was executed')
+    (state/history.FILENAME).rename(state/'demo-maintenance.sqlite3')
+    run('activity',['target/debug/tend'],{'TEND_ACTIVITY_QA':str(root/'activity')},screen='1600x1000x24')
+    print((root/'activity/activity-evidence.json').read_text(),flush=True)
 elif args.mode == 'accessibility':
     for variant, settings in [('scale-200',{'GDK_SCALE':'2'}),('large-text',{'TEND_QA_TEXT_SCALE':'1.35'}),('high-contrast',{'ADW_DEBUG_HIGH_CONTRAST':'1'})]:
         for theme in [1,2]:

@@ -176,3 +176,38 @@ administrator integration and running applications remain untouched. Final
 whole-app budgets, complete accessibility checks and timeout/cancellation audits
 remain required. Maintenance/incident history, alerts/panel status and settings
 bundles are the next implementation phases; the overall goal stays active.
+
+## Phase 5 — bounded maintenance history and incident timeline
+
+Source checkpoint only; production binaries and settings remain unchanged.
+
+- Root phase receipts are persisted before execution. Completed receipts restore
+  legacy state after a state-save failure; uncertain outcomes require review and
+  cannot automatically repeat a cleanup. Seven existing phases are wrapped
+  without changing their scheduling or restart code.
+- The system database is bounded to 4 MiB plus at most 4 MiB DELETE journal,
+  reserved inside the user-selected total history budget. Private audit failures
+  preserve the action result. User scheduled cleanup also writes a durable
+  receipt before running and protects Tend's own state from folder rules.
+- Activity combines paginated maintenance outcomes, private reports, diagnostic
+  sessions and explicitly requested bounded crash reads. Filters, readable dates,
+  details, exports and raw journal links use actual native widgets. Unknown prior
+  history and pending outcomes are labelled rather than guessed.
+- Read-only external queries have deadlines/output limits and owned process
+  groups; child queries terminate if their owner exits. No mutating maintenance
+  command is given a timeout that could interrupt an update.
+- Final phase-5 suite: 75 library tests and one panel test passed; 56 Python tests
+  ran, 55 passed and one legacy mocked notification skipped. Retained stderr
+  shows the namespace mock exited SIGSEGV; its cause and real delivery are not
+  established by that skip.
+- Native activity, existing visual matrix, expansion and cleanup suites passed.
+  Latest activity fixture: ../performance/native-fixtures/tend-workflow-xx9djfu6.
+  At 720px the redundant Source column hides; event details retain the source.
+  Latest GTK/Adwaita log has no warnings or critical messages.
+- Evidence logs: ../performance/tend-expansion-phase5-*.log. Fifteen protected
+  configuration/schedule/login fingerprints match the original baseline in
+  ../performance/tend-expansion-phase5-invariants.json.
+
+Remaining: phase 6 alerts/panel, phase 7 portability/release, final complete-app
+resource/accessibility gates, snapshot chronology under wall-clock rollback, and
+a native history-budget/retention editor. No deployment or publication yet.

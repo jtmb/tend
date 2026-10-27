@@ -5,6 +5,7 @@ replaced by a recorder. This tests helper wiring and rollback, not real updates.
 Requires bubblewrap with unprivileged user namespaces and debug helper binaries.
 """
 import json
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -28,7 +29,7 @@ entry={'program':name,'args':args}
 if name=='runuser' and 'cleanup' in args:
     entry['input']=json.loads(sys.stdin.read())
 if name=='unattended-upgrade':
-    entry['config']=Path(os.environ['APT_CONFIG']).read_text()
+    entry['config']=Path(os.environ['APT_CONFIG']).read_text() if os.environ.get('APT_CONFIG') else None
     entry['needrestart']=os.environ.get('NEEDRESTART_MODE')
 with Path('/qa/commands.jsonl').open('a') as f: f.write(json.dumps(entry)+'\n')
 fail=os.environ.get('TEND_SANDBOX_FAIL','')
@@ -129,7 +130,7 @@ class AdminSandboxTests(unittest.TestCase):
         p=self.stage/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
         return p
 
-    def invoke(self,action,data=None,*extra,fail='',uid='0',api=False):
+    def invoke(self,action,data=None,*extra,fail='',uid='0',api=False,engine=False):
         cmd=['bwrap','--die-with-parent','--unshare-all','--new-session',
              '--uid','0','--gid','0','--cap-drop','ALL',
              '--tmpfs','/usr',
@@ -150,12 +151,17 @@ class AdminSandboxTests(unittest.TestCase):
         for command in ['id','getent','systemctl','apt-get','apt-config',
                         'unattended-upgrade','date','notify-send','df','crontab','gsettings','docker']:
             cmd += ['--ro-bind',str(self.stage/'qa/mock-command'),'/usr/bin/'+command]
+        entrypoint=['/qa/tend-admin']
+        if engine:
+            assert engine is True or engine=='qa-engine.py'
+            entrypoint=['/usr/bin/python3','/usr/local/lib/dev-maintenance/'+('dev-maintenance.py' if engine is True else engine)]
         cmd += ['--ro-bind',str(self.stage/'qa/mock-command'),'/usr/sbin/runuser',
+                '--ro-bind',str(self.stage/'qa/mock-command'),'/usr/sbin/on_ac_power',
                 '--clearenv','--setenv','PATH','/usr/bin:/usr/sbin',
                 '--setenv','HOME','/home/james','--setenv','PKEXEC_UID','1000',
                 '--setenv','TEND_QA_SANDBOX','1',
                 '--setenv','TEND_SANDBOX_FAIL',fail,'--setenv','TEND_SANDBOX_UID',uid,
-                '--','/qa/tend-admin',action,*extra]
+                '--',*entrypoint,action,*extra]
         result=subprocess.run(cmd,input='' if data is None else json.dumps(data),
                               text=True,capture_output=True,timeout=30)
         with (self.stage/'qa/results.jsonl').open('a') as f:
@@ -247,7 +253,8 @@ class AdminSandboxTests(unittest.TestCase):
         result=self.invoke('notify',None,'60')
         if result.returncode and not any(c['program']=='notify-send' for c in self.commands()):
             self.assertTrue(any(c['program']=='date' for c in self.commands()))
-            self.skipTest('Host execution policy blocks mocked notify-send; notification delivery requires session verification')
+            self.assertIn('signal: 11 (SIGSEGV)',result.stderr)
+            self.skipTest('Mock notify-send exits with SIGSEGV in this namespace; delivery remains unverified')
         self.assert_ok(result)
         self.assertTrue(any(c['program']=='notify-send' for c in self.commands()))
 
@@ -307,6 +314,58 @@ class AdminSandboxTests(unittest.TestCase):
         self.assert_ok(self.invoke('exclusions-save',empty))
         self.assertEqual(json.loads((self.stage/'etc/tend/exclusions.json').read_text()),{**empty,'revision':1})
 
+    def test_maintenance_receipt_prevents_cleanup_replay_after_legacy_state_write_failure(self):
+        import sqlite3
+        spec=importlib.util.spec_from_file_location('history_integration_installer',ROOT/'scripts/install-policy.py')
+        installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
+        source=installer.patch_engine((ROOT/'tests/fixtures/maintenance-engine.py.txt').read_text())
+        self.write('usr/local/lib/dev-maintenance/dev-maintenance.py',source)
+        self.write('usr/local/lib/dev-maintenance/tend_maintenance_history.py',(ROOT/'assets/tend_maintenance_history.py').read_text())
+        self.write('etc/passwd','root:x:0:0:Fixture root:/root:/bin/bash\nfixture:x:1000:1000:Fixture:/home/fixture:/bin/bash\n')
+        launcher='''import importlib.util,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('fixture_engine',Path(__file__).with_name('dev-maintenance.py'))
+engine=importlib.util.module_from_spec(spec);spec.loader.exec_module(engine)
+original=engine.atomic_json
+def fail_state_once(path,value,mode):
+    flag=Path('/qa/fail-state-once')
+    if path.name=='state.json' and value.get('phases',{}).get('apt-cache',{}).get('success') and flag.exists():
+        flag.rename('/qa/retained-fault-marker')
+        raise OSError('Controlled fixture state-write failure after cleanup')
+    return original(path,value,mode)
+engine.atomic_json=fail_state_once
+sys.exit(engine.main())'''
+        self.write('usr/local/lib/dev-maintenance/qa-engine.py',launcher)
+        for path in (self.stage/'usr/local/lib/dev-maintenance').iterdir():path.chmod(0o644)
+        (self.stage/'etc/passwd').chmod(0o644)
+        self.write('qa/fail-state-once','fail once')
+        first=self.invoke('--run',engine='qa-engine.py')
+        self.assertNotEqual(first.returncode,0);self.assertIn('Controlled fixture state-write failure',first.stderr)
+        path=self.stage/'var/lib/dev-maintenance/state.json';state=json.loads(path.read_text())
+        self.assertEqual(state['phases']['apt-cache']['status'],'running')
+        db_path=self.stage/'var/lib/dev-maintenance/tend-history.sqlite3'
+        with sqlite3.connect('file:'+str(db_path)+'?mode=ro',uri=True) as db:
+            row=db.execute("SELECT status,payload FROM receipts WHERE phase='apt-cache'").fetchone()
+            self.assertEqual(row[0],'success');completed=json.loads(row[1])
+        state['phases']['apt-cache']['last_attempt']=0
+        path.with_suffix('.retained-started.json').write_bytes(path.read_bytes())
+        path.write_text(json.dumps(state));path.chmod(0o600)
+        second=self.invoke('--run',engine=True)
+        self.assert_ok(second)
+        after=json.loads(path.read_text())
+        self.assertEqual(after['phases']['apt-cache']['last_success'],completed['finished_ms']/1000)
+        self.assertIn('action not repeated',after['phases']['apt-cache']['message'])
+        autoclean=[c for c in self.commands() if c['program']=='apt-get' and c['args'][-1]=='autoclean']
+        self.assertEqual(len(autoclean),1)
+        with sqlite3.connect('file:'+str(db_path)+'?mode=ro',uri=True) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM events WHERE phase='apt-cache'").fetchone()[0],2)
+            self.assertEqual(db.execute('SELECT count(DISTINCT phase) FROM events').fetchone()[0],7)
+        public=self.invoke('maintenance-history',uid='1000')
+        self.assert_ok(public);records=json.loads(public.stdout)
+        self.assertEqual(len(records['events']),7)
+        self.assertTrue(any(e['title']=='APT download cache' and e['outcome']=='Success' for e in records['events']))
+        self.assertFalse(any(c['program']=='systemctl' for c in self.commands()))
+
     def test_cleanup_passes_exact_policy_and_reports_worker_failure(self):
         c=dict(apt=True,docker_build=False,docker_images=False,npm_logs=False,
                thumbnails=False,trash=False,pip=False,age_days=14,keep_gb=5)
@@ -353,6 +412,33 @@ class AdminSandboxTests(unittest.TestCase):
         self.assert_ok(applied);self.assertIn('skipped',applied.stdout)
         self.assertTrue(target.exists())
         self.assertTrue(all(c['program']=='id' for c in self.commands()))
+
+    def test_user_schedule_receipt_survives_audit_failure_and_blocks_uncertain_replay(self):
+        config='home/james/.config/tend/'
+        self.write(config+'cleanup-schedule.json',json.dumps(dict(enabled=True,expression='0 0 1 1 *',catch_up=True)))
+        self.write(config+'cleanup.json',json.dumps(dict(apt=False,docker_build=False,docker_images=False,npm_logs=False,pip=False,thumbnails=False,trash=False)))
+        self.write(config+'rules.json','{"rules":[]}')
+        history=self.write('home/james/.local/state/tend/history.sqlite3','preserved corrupt fixture')
+        history.chmod(0o600);history.parent.chmod(0o700)
+        first=self.invoke('scheduled-run',api=True,uid='1000')
+        self.assert_ok(first);self.assertIn('history could not be saved',first.stdout)
+        path=history.with_name('scheduled-cleanup.json');saved=json.loads(path.read_text())
+        self.assertIn('last_due',saved);self.assertNotIn('running_due',saved)
+        before=path.read_bytes();second=self.invoke('scheduled-run',api=True,uid='1000')
+        self.assert_ok(second);self.assertIn('already completed',second.stdout);self.assertEqual(path.read_bytes(),before)
+        path.write_text(json.dumps(dict(running_due=saved['last_due'],attempts=0)));path.chmod(0o600)
+        count=len(self.commands());uncertain=self.invoke('scheduled-run',api=True,uid='1000')
+        self.assertNotEqual(uncertain.returncode,0);self.assertIn('uncertain',uncertain.stderr);self.assertEqual(len(self.commands()),count)
+        path.write_text('{broken')
+        malformed=self.invoke('scheduled-run',api=True,uid='1000')
+        self.assertNotEqual(malformed.returncode,0);self.assertIn('Invalid cleanup receipt',malformed.stderr);self.assertEqual(path.read_text(),'{broken')
+        path.write_text('{}');history.parent.chmod(0o500)
+        mutations=sum(c['program']=='id' for c in self.commands())
+        stopped=self.invoke('scheduled-run',api=True,uid='1000')
+        self.assertNotEqual(stopped.returncode,0);self.assertEqual(path.read_text(),'{}')
+        self.assertEqual(sum(c['program']=='id' for c in self.commands()),mutations)
+        history.parent.chmod(0o700)
+        self.assertEqual(history.read_text(),'preserved corrupt fixture')
 
     def test_update_reboot_override_battery_and_failure(self):
         self.assert_ok(self.invoke('updates'))

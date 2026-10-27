@@ -87,6 +87,7 @@ fn main() {
         Some("restore") => p::restore(args[1].parse().unwrap()),
         Some("signal") => signal_fixture(&args[1]),
         Some("cleanup-plan") => cleanup_fixture(&args[1], &args[2]),
+        Some("scheduled-run") => tend::cleanup_rules::scheduled(true),
         Some("workspace-containers") => {
             serde_json::from_str::<tend::workspaces::Settings>(&args[1])
                 .map_err(|e| e.to_string())
