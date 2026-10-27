@@ -73,9 +73,13 @@ def tick():
             assert props['IconName'] == 'io.github.jtmb.Tend-symbolic'
             assert props['Menu'] == '/Menu'
             layout = call('com.canonical.dbusmenu', 'GetLayout', '(iias)', (0,-1,[])).unpack()
-            assert layout[0] == 1 and len(layout[1][2]) == 3
+            assert layout[0] >= 1 and len(layout[1][2]) == 10
             labels = [row[1].get('label') for row in layout[1][2]]
-            assert labels == ['Open Tend',None,'Quit Tend'], labels
+            assert labels[0] == 'Open Tend' and labels[-2:] == [None,'Quit Tend'], labels
+            assert labels[1] == 'Monitoring off', labels
+            assert props['ToolTip'][3] == 'Monitoring off'
+            assert not layout[1][2][6][1]['enabled']
+            assert not layout[1][2][7][1]['enabled']
             call('com.canonical.dbusmenu', 'Event', '(isvu)', (1,'clicked',GLib.Variant('i',0),0))
             state = 1
         elif state == 1 and report.get('closed_again'):

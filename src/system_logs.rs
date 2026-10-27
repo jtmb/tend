@@ -77,6 +77,14 @@ pub fn decode(line: &str) -> Option<Entry> {
     })
 }
 pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
+    load_cancellable(source,period,limit,&std::sync::atomic::AtomicBool::new(false))
+}
+pub fn load_cancellable(source: u32, period: u32, limit: u32, cancelled: &std::sync::atomic::AtomicBool) -> Result<String, String> {
+    serde_json::to_string(&entries_cancellable(source,period,limit,cancelled)?).map_err(|e|e.to_string())
+}
+/// Typed path for opt-in monitoring, avoiding a second encoded copy of reports.
+pub fn entries_cancellable(source: u32, period: u32, limit: u32, cancelled: &std::sync::atomic::AtomicBool) -> Result<Vec<Entry>, String> {
+    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {return Err("Log query cancelled.".into());}
     #[cfg(feature = "docs-demo")]
     if std::env::var_os("TEND_DEMO_DIR").is_some() {
         // Public demo input, parsed with the normal journal decoder. Never read
@@ -89,7 +97,7 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
             .filter(|e| source != 2 || e.crash)
             .take(limit as usize)
             .collect();
-        return serde_json::to_string(&entries).map_err(|e| e.to_string());
+        return Ok(entries);
     }
     let mut cmd = Command::new("/usr/bin/journalctl");
     cmd.args([
@@ -118,7 +126,7 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
     if source == 2 {
         cmd.arg("MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1");
     }
-    let out = crate::queries::run(&mut cmd,std::time::Duration::from_secs(15),8*1024*1024)?;
+    let out = crate::queries::run_cancellable(&mut cmd,std::time::Duration::from_secs(15),8*1024*1024,cancelled)?;
     let mut entries: Vec<_> = out
         .lines()
         .filter_map(decode)
@@ -131,6 +139,7 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
             }).collect();
             reports.sort_by_key(|(time,_)|std::cmp::Reverse(*time));
             for (_,p) in reports.into_iter().take(100) {
+                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {return Err("Log query cancelled.".into());}
                 if p.extension().and_then(|s| s.to_str()) != Some("crash") {
                     continue;
                 }
@@ -205,7 +214,7 @@ pub fn load(source: u32, period: u32, limit: u32) -> Result<String, String> {
     }
     entries.sort_by_key(|e| std::cmp::Reverse(e.time));
     entries.truncate(limit as usize);
-    serde_json::to_string(&entries).map_err(|e| e.to_string())
+    Ok(entries)
 }
 pub fn time(value: i64) -> String {
     crate::presentation::when(value)

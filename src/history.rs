@@ -434,7 +434,7 @@ impl History {
         let mut statement=self.db.prepare("SELECT row,id,kind,time_ms,boot_id,payload FROM events
             WHERE time_ms>=?1 AND (?2 IS NULL OR time_ms<?2 OR(time_ms=?2 AND row<?3))
             AND (?4=0 OR (?4=1 AND kind='report/updates') OR (?4=2 AND kind IN('report/cleanup','report/custom-cleanup','report/scheduled-cleanup','report/daily-cleanup','report/npm-verify'))
-                OR (?4=3 AND kind IN('diagnostic','health-alert')) OR (?4=4 AND kind IN('report/settings','report/startup','report/service','report/graphics','report/memory','report/memory-restore','report/undo')))
+                OR (?4=3 AND kind IN('diagnostic','health-alert','report/health-alert')) OR (?4=4 AND kind IN('report/settings','report/startup','report/service','report/graphics','report/memory','report/memory-restore','report/undo')))
             AND (?5=0 OR (?5=1 AND json_extract(payload,'$.success')=1) OR (?5=2 AND json_extract(payload,'$.success')=0) OR (?5=3 AND json_extract(payload,'$.status')='deferred') OR (?5=4 AND json_extract(payload,'$.status')='running'))
             AND (?6='' OR instr(lower(kind||' '||COALESCE(json_extract(payload,'$.report'),json_extract(payload,'$.workload'),'')),lower(?6))>0)
             ORDER BY time_ms DESC,row DESC LIMIT ?7").map_err(error)?;

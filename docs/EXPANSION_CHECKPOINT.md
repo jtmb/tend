@@ -211,3 +211,54 @@ Source checkpoint only; production binaries and settings remain unchanged.
 Remaining: phase 6 alerts/panel, phase 7 portability/release, final complete-app
 resource/accessibility gates, snapshot chronology under wall-clock rollback, and
 a native history-budget/retention editor. No deployment or publication yet.
+
+## Phase 6 — opt-in monitoring and live panel
+
+Source checkpoint only. The installed Tend process (PID 111567) remains open;
+no user monitoring policy was created and no production binary was replaced.
+
+- A default-off private policy configures CPU, available memory, root free disk
+  space, memory-full and I/O-full PSI thresholds, sustained duration, repeat
+  cooldown, recovery notices and optional new-crash checks.
+- The native monitoring editor lives under Appearance, with page-local
+  Save/Discard, an explicit close button, runtime status and snooze/resume.
+  Saving preserves edits made during an asynchronous save. Closing disconnects
+  its signal graph; the native test confirms its Save widget is released.
+- Enabled monitoring subscribes to the existing shared Basic sampler at 15s.
+  Hidden windows keep it active; disabled state releases it. Quit removes the
+  subscription and cancels optional owned log queries before sampler shutdown.
+  No daemon, autostart, timer, filesystem watcher or per-sample history is added.
+- Alerts require sustained readings, use hysteresis and per-condition cooldown,
+  and suppress warnings/recoveries during snooze. Missing readings, sleep gaps
+  and clock discontinuities reset continuity; unknown readings cannot imply
+  recovery. Repeats after a gap require a fresh sustained condition.
+- Optional crash checks are bounded to visible recent reports every five minutes.
+  They begin after opt-in, deduplicate bounded fingerprints rather than retain
+  messages, have cooldown, and do not replay old reports after clock rollback.
+  A typed reader avoids a second encoded report copy. Query cancellation stops
+  only the newly created read-only query process group.
+- The panel exposes current, off/snoozed or stale status and non-destructive
+  shortcuts to Diagnostics, System logs, Activity and Storage. Existing close,
+  host-loss recovery and Quit behavior passes its private-bus protocol test.
+- Notification delivery is tested against an isolated real D-Bus interface, not
+  the desktop: initial warning, repeat, recovery and fixture-crash notices all
+  arrived. The native workflow also tests Save/Discard, hidden delivery,
+  snooze/resume, duplicate crashes, disabling and alert-history filtering.
+- Authoritative suite: 82 library tests plus one panel test passed; one legacy
+  Rust fixture deletion test remains intentionally ignored. Python: 55 passed,
+  one legacy notify-send namespace mock skipped (SIGSEGV remains unverified).
+  The existing native visual/feature matrix and updated panel test passed.
+- Evidence: ../performance/tend-expansion-phase6-{rust,debug-build,native,panel,
+  matrix,python}.log. Latest health fixture: native-fixtures/tend-workflow-nf6vp5k6;
+  panel: tend-workflow-t62bao6r; matrix: tend-workflow-bxakptns. All six demo input
+  files retain their original bytes and timestamps. No GTK warnings/criticals
+  were found; software Xvfb emits its expected unavailable-DRI3 warnings.
+- Fifteen schedule/config/login fingerprints still match the original baseline:
+  ../performance/tend-expansion-phase6-invariants.json.
+
+Remaining phase 7 gates include optimized whole-app CPU/memory/interaction
+measurements (including ten minutes enabled), the full accessibility matrix,
+settings bundles and reviewed disabled drafts, a native history-limit editor,
+snapshot ordering under wall-clock rollback, final all-feature audit, README
+workflow demo, matching backed-up deployment and publication. Do not declare
+the expansion complete or deployed from these source-only checks.

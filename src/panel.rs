@@ -1,7 +1,37 @@
 //! StatusNotifierItem + DBusMenu, using the existing GIO dependency. No polling.
 use adw::prelude::*;
 use gtk::{gio, glib};
-use std::{cell::Cell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+};
+thread_local! {static CONNECTION:RefCell<Option<gio::DBusConnection>>=const{RefCell::new(None)}; static REVISION:Cell<u32>=const{Cell::new(1)};}
+pub fn refresh() {
+    CONNECTION.with(|cell| {
+        if let Some(connection) = cell.borrow().as_ref() {
+            let revision = REVISION.with(|r| {
+                let n = r.get().wrapping_add(1).max(1);
+                r.set(n);
+                n
+            });
+            let _ = connection.emit_signal(
+                None,
+                "/StatusNotifierItem",
+                "org.kde.StatusNotifierItem",
+                "NewToolTip",
+                None,
+            );
+            let _ = connection.emit_signal(
+                None,
+                "/Menu",
+                "com.canonical.dbusmenu",
+                "LayoutUpdated",
+                Some(&(revision, 0i32).to_variant()),
+            );
+        }
+    });
+}
 
 const ITEM: &str = r#"<node><interface name="org.kde.StatusNotifierItem">
 <method name="Activate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
@@ -15,7 +45,7 @@ const ITEM: &str = r#"<node><interface name="org.kde.StatusNotifierItem">
 <property name="OverlayIconName" type="s" access="read"/><property name="AttentionIconName" type="s" access="read"/>
 <property name="AttentionMovieName" type="s" access="read"/><property name="ItemIsMenu" type="b" access="read"/>
 <property name="Menu" type="o" access="read"/><property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
-<signal name="NewIcon"/><signal name="NewStatus"><arg type="s"/></signal>
+<signal name="NewToolTip"/><signal name="NewIcon"/><signal name="NewStatus"><arg type="s"/></signal>
 </interface></node>"#;
 const MENU: &str = r#"<node><interface name="com.canonical.dbusmenu">
 <property name="Version" type="u" access="read"/><property name="TextDirection" type="s" access="read"/>
@@ -30,42 +60,66 @@ const MENU: &str = r#"<node><interface name="com.canonical.dbusmenu">
 <signal name="LayoutUpdated"><arg type="u"/><arg type="i"/></signal>
 <signal name="ItemsPropertiesUpdated"><arg type="a(ia{sv})"/><arg type="a(ias)"/></signal>
 </interface></node>"#;
+const CHILDREN: [i32; 10] = [1, 4, 5, 6, 9, 10, 7, 8, 2, 3];
 fn properties(id: i32) -> HashMap<String, glib::Variant> {
     let mut p = HashMap::new();
     if id == 0 {
         p.insert("children-display".into(), "submenu".to_variant());
     } else if id == 2 {
         p.insert("type".into(), "separator".to_variant());
-    } else {
-        p.insert(
-            "label".into(),
-            if id == 1 { "Open Tend" } else { "Quit Tend" }.to_variant(),
-        );
-        p.insert("enabled".into(), true.to_variant());
+    } else if let Some(label) = match id {
+        1 => Some("Open Tend".into()),
+        3 => Some("Quit Tend".into()),
+        4 => Some(crate::health_ui::summary()),
+        5 => Some("Record diagnostics".into()),
+        6 => Some("System logs".into()),
+        9 => Some("Activity and reports".into()),
+        10 => Some("Storage and cleanup".into()),
+        7 => Some("Snooze alerts for one hour".into()),
+        8 => Some("Resume alerts".into()),
+        _ => None,
+    } {
+        p.insert("label".into(), label.to_variant());
+        let enabled = match id {
+            4 => false,
+            7 => crate::health_ui::enabled() && !crate::health_ui::snoozed(),
+            8 => crate::health_ui::enabled() && crate::health_ui::snoozed(),
+            _ => true,
+        };
+        p.insert("enabled".into(), enabled.to_variant());
         p.insert("visible".into(), true.to_variant());
     }
     p
 }
 fn layout(id: i32, depth: i32) -> glib::Variant {
     let children: Vec<glib::Variant> = if id == 0 && depth != 0 {
-        (1..=3).map(|i| layout(i, 0)).collect()
+        CHILDREN.into_iter().map(|i| layout(i, 0)).collect()
     } else {
         vec![]
     };
     (id, properties(id), children).to_variant()
 }
 fn activate(app: &adw::Application, id: i32, event: &str) {
-    if event == "clicked" {
-        match id {
-            1 => app.activate_action("show", None),
-            3 => app.activate_action("quit", None),
-            _ => {}
-        }
+    if event != "clicked" {
+        return;
+    }
+    match id {
+        1 => app.activate_action("show", None),
+        3 => app.activate_action("quit", None),
+        5 => app.activate_action("open-diagnostics", None),
+        6 => app.activate_action("open-system-logs", None),
+        9 => app.activate_action("open-activity", None),
+        10 => app.activate_action("open-storage", None),
+        7 => crate::health_ui::snooze(),
+        8 => crate::health_ui::resume(),
+        _ => {}
     }
 }
 pub fn install(app: &adw::Application, ready: Rc<Cell<bool>>) {
     // Preview instances must never register an icon on the real desktop.
-    let protocol_test = cfg!(feature = "docs-demo") && std::env::var_os("TEND_PANEL_QA").is_some();
+    let protocol_test = cfg!(feature = "docs-demo")
+        && (std::env::var_os("TEND_PANEL_QA").is_some()
+            || std::env::var_os("TEND_HEALTH_QA").is_some());
     if std::env::var_os("TEND_SCREENSHOT").is_some() && !protocol_test {
         return;
     }
@@ -81,6 +135,7 @@ pub fn install(app: &adw::Application, ready: Rc<Cell<bool>>) {
             let Ok(connection) = result else {
                 return;
             };
+            CONNECTION.with(|cell| *cell.borrow_mut() = Some(connection.clone()));
             let item = gio::DBusNodeInfo::for_xml(ITEM).unwrap();
             let menu = gio::DBusNodeInfo::for_xml(MENU).unwrap();
             let action_app = weak.clone();
@@ -114,7 +169,7 @@ pub fn install(app: &adw::Application, ready: Rc<Cell<bool>>) {
                         "io.github.jtmb.Tend-symbolic",
                         Vec::<(i32, i32, Vec<u8>)>::new(),
                         "Tend",
-                        "System tools",
+                        crate::health_ui::tooltip(),
                     )
                         .to_variant(),
                     _ => "".to_variant(),
@@ -136,7 +191,10 @@ pub fn install(app: &adw::Application, ready: Rc<Cell<bool>>) {
                     let response = match method {
                         "GetLayout" => {
                             let (id, depth, _) = params.get::<(i32, i32, Vec<String>)>().unwrap();
-                            glib::Variant::tuple_from_iter([1u32.to_variant(), layout(id, depth)])
+                            glib::Variant::tuple_from_iter([
+                                REVISION.with(|r| r.get()).to_variant(),
+                                layout(id, depth),
+                            ])
                         }
                         "GetGroupProperties" => {
                             let (ids, _) = params.get::<(Vec<i32>, Vec<String>)>().unwrap();
@@ -245,7 +303,9 @@ mod tests {
             .get::<(i32, HashMap<String, glib::Variant>, Vec<glib::Variant>)>()
             .unwrap();
         assert_eq!(id, 0);
-        assert_eq!(children.len(), 3);
+        assert_eq!(children.len(), 10);
+        assert!(!properties(4)["enabled"].get::<bool>().unwrap());
+        assert!(!properties(7)["enabled"].get::<bool>().unwrap());
         assert_eq!(properties(1)["label"].get::<String>().unwrap(), "Open Tend");
         assert_eq!(properties(3)["label"].get::<String>().unwrap(), "Quit Tend");
     }

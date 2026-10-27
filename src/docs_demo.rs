@@ -2160,3 +2160,47 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         app.activate_action("quit",None);
     });
 }
+
+/// Native monitoring editor, sampler delivery and notification protocol fixture.
+pub fn health_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::Box,stack:&gtk::Stack,directory:&str){
+    let (app,win,outer,stack,directory)=(app.clone(),win.clone(),outer.clone(),stack.clone(),Path::new(directory).to_owned());
+    let home=tend::workstation::home();assert_eq!(home.parent(),directory.parent());assert!(home.join("demo-journal.jsonl").is_file());
+    fs::create_dir_all(&directory).unwrap();
+    glib::timeout_add_local_once(Duration::from_millis(1200),move||{
+        let named=|root:&gtk::Widget,name:&str|descendants(root).into_iter().find(|w|w.widget_name()==name).unwrap_or_else(||panic!("Missing monitoring control {name}"));
+        let notifications=||->Vec<Value>{fs::read(directory.join("notifications.json")).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_default()};
+        assert_eq!(crate::health_ui::summary(),"Monitoring off");assert!(!tend::health::path().exists());assert!(!tend::history::path().exists());
+        stack.set_visible_child_name("care");button(&page(&stack,"care"),"Configure monitoring").emit_clicked();wait_main_context(Duration::from_millis(400));
+        let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();
+        let enabled=named(&widget,"monitor-enabled").downcast::<gtk::Switch>().unwrap();
+        assert!(!enabled.is_active());assert!(!button(&widget,"Save changes").is_sensitive());
+        enabled.set_active(true);assert!(button(&widget,"Save changes").is_sensitive());button(&widget,"Discard changes").emit_clicked();assert!(!enabled.is_active());
+        enabled.set_active(true);named(&widget,"monitor-hold").downcast::<gtk::SpinButton>().unwrap().set_value(30.);named(&widget,"monitor-cooldown").downcast::<gtk::SpinButton>().unwrap().set_value(60.);
+        button(&widget,"Save changes").emit_clicked();assert!(wait_until(||tend::health::Settings::read().is_ok_and(|s|s.enabled)&&crate::health_ui::enabled(),Duration::from_secs(6)));
+        wait_main_context(Duration::from_millis(300));assert!(!button(&widget,"Save changes").is_sensitive());
+        for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(500));let paint=gtk::WidgetPaintable::new(Some(&win));let shot=gtk::Snapshot::new();paint.snapshot(&shot,win.width() as f64,win.height() as f64);win.renderer().unwrap().render_texture(&shot.to_node().unwrap(),None).save_to_png(directory.join(format!("monitoring-{width}.png"))).unwrap();}
+        let weak_save=button(&widget,"Save changes").downgrade();dialog.close();drop(widget);drop(dialog);drop(enabled);wait_main_context(Duration::from_millis(400));assert!(weak_save.upgrade().is_none(),"Closed monitoring editor retains its signal graph");
+        for target in ["diagnostics","system-logs","activity","storage"]{app.activate_action(&format!("open-{target}"),None);assert_eq!(stack.visible_child_name().as_deref(),Some(target));}
+        stack.set_visible_child_name("care");
+        let close=descendants(&outer).into_iter().find(|w|w.widget_name()=="window-close").unwrap().downcast::<gtk::Button>().unwrap();close.emit_clicked();assert!(!win.is_visible(),"Preview panel did not receive the close");
+        let start=tend::observations::boot_millis().unwrap()+60000;
+        for elapsed in [0,15000,30000]{crate::health_ui::qa_observe(&app,95.,start+elapsed);}
+        assert!(wait_until(||notifications().len()==1,Duration::from_secs(6)));assert_eq!(notifications()[0]["title"],"High CPU use");wait_main_context(Duration::from_millis(250));
+        app.activate_action("show",None);button(&page(&stack,"care"),"Configure monitoring").emit_clicked();wait_main_context(Duration::from_millis(300));let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();
+        button(&widget,"Snooze for one hour").emit_clicked();assert!(crate::health_ui::snoozed());
+        for elapsed in [45000,60000,75000,90000]{crate::health_ui::qa_observe(&app,95.,start+elapsed);}wait_main_context(Duration::from_millis(300));assert_eq!(notifications().len(),1);
+        button(&widget,"Resume notifications").emit_clicked();assert!(!crate::health_ui::snoozed());crate::health_ui::qa_observe(&app,95.,start+105000);
+        assert!(wait_until(||notifications().len()==2,Duration::from_secs(6)));wait_main_context(Duration::from_millis(250));
+        for elapsed in [120000,135000,150000]{crate::health_ui::qa_observe(&app,10.,start+elapsed);}
+        assert!(wait_until(||notifications().len()==3,Duration::from_secs(6)));assert!(notifications()[2]["title"].as_str().unwrap().contains("Recovered"));wait_main_context(Duration::from_millis(250));
+        // The optional crash check reads only prepared public journal data.
+        let crashes=named(&widget,"monitor-crashes").downcast::<gtk::Switch>().unwrap();crashes.set_active(true);button(&widget,"Save changes").emit_clicked();assert!(wait_until(||tend::health::Settings::read().is_ok_and(|s|s.crashes),Duration::from_secs(6)));wait_main_context(Duration::from_millis(250));
+        let journal=home.join("demo-journal.jsonl");let original=journal.with_extension("health-original");fs::rename(&journal,&original).unwrap();let report=json!({"__REALTIME_TIMESTAMP":((tend::workstation::now()-1)*1000000).to_string(),"PRIORITY":"3","_COMM":"fixture-app","COREDUMP_EXE":"/fixture/app","COREDUMP_PID":"42","MESSAGE":"Fixture crash; no real app was stopped"});fs::write(&journal,format!("{report}\n")).unwrap();crate::health_ui::qa_crashes(&app);
+        assert!(wait_until(||notifications().len()==4,Duration::from_secs(6)));assert_eq!(notifications()[3]["title"],"Recent application crashes");crate::health_ui::qa_crashes(&app);wait_main_context(Duration::from_millis(400));assert_eq!(notifications().len(),4);fs::rename(&journal,directory.join("fixture-crash-journal.jsonl")).unwrap();fs::rename(original,&journal).unwrap();
+        named(&widget,"monitor-enabled").downcast::<gtk::Switch>().unwrap().set_active(false);button(&widget,"Save changes").emit_clicked();assert!(wait_until(||!crate::health_ui::enabled(),Duration::from_secs(6)));let count=notifications().len();crate::health_ui::qa_observe(&app,100.,start+1000000);wait_main_context(Duration::from_millis(300));assert_eq!(notifications().len(),count);assert_eq!(crate::health_ui::summary(),"Monitoring off");
+        dialog.close();drop(widget);drop(dialog);drop(crashes);
+        let events=tend::activity::load(&tend::activity::Query{source:2,category:3,..Default::default()},None).unwrap();assert_eq!(events.events.len(),3,"Alert history is missing: {:?}",events.warnings);
+        fs::write(directory.join("health-evidence.json"),serde_json::to_vec_pretty(&json!({"native_save_discard":true,"closed_editor_released":true,"hidden_monitor_delivery":true,"warning_repeat_recovery":true,"snooze_resume":true,"optional_crash_query_deduplicated":true,"disabled_no_delivery":true,"panel_shortcuts":true,"bounded_alert_history":events.events.len(),"notifications":notifications().len(),"fixture_only":true})).unwrap()).unwrap();
+        app.quit();
+    });
+}

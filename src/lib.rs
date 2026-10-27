@@ -3,6 +3,7 @@ pub mod cleanup_plan;
 pub mod diagnostics;
 pub mod exclusions;
 pub mod queries;
+pub mod health;
 pub mod activity;
 pub mod workspaces;
 use std::{fs, process::Command};

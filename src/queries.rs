@@ -4,6 +4,7 @@ use std::{
     io::Read,
     os::{fd::AsRawFd, unix::process::CommandExt},
     process::{Child, Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
@@ -83,6 +84,17 @@ fn drain(
     }
 }
 pub fn run(command: &mut Command, timeout: Duration, max_bytes: usize) -> Result<String, String> {
+    run_cancellable(command, timeout, max_bytes, &AtomicBool::new(false))
+}
+pub fn run_cancellable(
+    command: &mut Command,
+    timeout: Duration,
+    max_bytes: usize,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Read-only query cancelled.".into());
+    }
     if timeout.is_zero()
         || timeout > Duration::from_secs(30)
         || max_bytes == 0
@@ -106,6 +118,9 @@ pub fn run(command: &mut Command, timeout: Duration, max_bytes: usize) -> Result
     let started = Instant::now();
     let mut status = None;
     loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("Read-only query cancelled.".into());
+        }
         drain(
             &mut stdout,
             &mut out,
@@ -185,6 +200,34 @@ mod tests {
         )
         .unwrap_err()
         .contains("failed"));
+    }
+    #[test]
+    fn cancellation_stops_only_the_owned_query() {
+        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+        let signal = cancelled.clone();
+        let notifier = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            signal.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        assert!(run_cancellable(
+            Command::new("/usr/bin/sleep").arg("5"),
+            Duration::from_secs(2),
+            100,
+            &cancelled
+        )
+        .unwrap_err()
+        .contains("cancelled"));
+        notifier.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(run_cancellable(
+            &mut Command::new("/usr/bin/false"),
+            Duration::from_secs(1),
+            100,
+            &cancelled
+        )
+        .unwrap_err()
+        .contains("cancelled"));
     }
     #[test]
     fn query_exits_when_its_owner_thread_stops() {

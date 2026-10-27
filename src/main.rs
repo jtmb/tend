@@ -10,6 +10,7 @@ mod exclusions_ui;
 mod log_reader;
 mod maintenance_ui;
 mod monitor;
+mod health_ui;
 mod panel;
 mod process_tree_ui;
 mod storage_history_ui;
@@ -514,6 +515,8 @@ fn build(app: &adw::Application) {
         }
     });
     care.append(&appearance);
+    health_ui::install(app);
+    health_ui::add(&care,&win,app);
     care.append(&label("Tend 0.2", "caption"));
     stack.add_titled(&scroll(&care), Some("care"), "Appearance");
     activity_ui::add(&stack,&win);
@@ -603,11 +606,22 @@ fn build(app: &adw::Application) {
     }
     win.set_content(Some(&outer));
     win.present();
+    for target in ["diagnostics","system-logs","activity","storage"] {
+        let action=gtk::gio::SimpleAction::new(&format!("open-{target}"),None);
+        let stack=stack.downgrade();let win=win.downgrade();
+        action.connect_activate(move|_,_|{if let(Some(stack),Some(win))=(stack.upgrade(),win.upgrade()){
+            stack.set_visible_child_name(target);win.unminimize();win.present();
+        }});app.add_action(&action);
+    }
     panel::install(app, panel_ready.clone());
     #[cfg(feature = "docs-demo")]
     if let Ok(path) = std::env::var("TEND_PANEL_QA") {
         docs_demo::panel_qa(&win, &outer, panel_ready, &path);
         return;
+    }
+    #[cfg(feature="docs-demo")]
+    if let Ok(directory)=std::env::var("TEND_HEALTH_QA") {
+        docs_demo::health_qa(app,&win,&outer,&stack,&directory);return;
     }
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
     #[cfg(feature = "docs-demo")]
@@ -740,6 +754,6 @@ fn main() -> glib::ExitCode {
             build(app);
         }
     });
-    app.connect_shutdown(|_| monitor::shutdown());
+    app.connect_shutdown(|_| {health_ui::shutdown();monitor::shutdown();});
     app.run()
 }

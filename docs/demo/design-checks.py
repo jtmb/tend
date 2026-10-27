@@ -12,7 +12,7 @@ import subprocess
 import resource
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity'])
+parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity', 'health'])
 parser.add_argument('--parent',type=Path,default=Path('/tmp/opencode'),help='Retained fixture directory; history tests require at least 2 GiB free')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
@@ -89,6 +89,12 @@ elif args.mode == 'accessibility':
                 run(name,['target/debug/tend'],settings|{'TEND_SCREENSHOT':str(path),'TEND_SCREENSHOT_PAGE':page,'TEND_QA_WIDTH':'960' if variant == 'scale-200' else '720'})
                 assert path.is_file()
                 records.append({'variant':variant,'theme':theme,'page':page,'image':str(path)})
+elif args.mode == 'health':
+    current=env.copy();current.pop('DBUS_SESSION_BUS_ADDRESS')
+    current['TEND_HEALTH_QA']=str(root/'health')
+    with (output/'health.log').open('w') as log:
+        subprocess.run(['dbus-run-session','--config-file=docs/demo/private-bus.conf','--','xvfb-run','-a','/usr/bin/python3','docs/demo/health-check.py'],env=current,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=90)
+    print((root/'health/health-evidence.json').read_text(),flush=True)
 elif args.mode == 'panel':
     current = env.copy(); current.pop('DBUS_SESSION_BUS_ADDRESS')
     current['TEND_PANEL_QA'] = str(root/'panel-evidence.json')
