@@ -12,6 +12,7 @@ mod maintenance_ui;
 mod monitor;
 mod health_ui;
 mod history_ui;
+mod settings_ui;
 mod panel;
 mod process_tree_ui;
 mod storage_history_ui;
@@ -68,6 +69,7 @@ fn row(group: &adw::PreferencesGroup, title: &str, subtitle: &str, widget: &impl
     r.set_title(title);
     r.set_subtitle(subtitle);
     widget.set_valign(gtk::Align::Center);
+    widget.as_ref().update_property(&[gtk::accessible::Property::Label(title),gtk::accessible::Property::Description(subtitle)]);
     r.add_suffix(widget);
     r.set_activatable_widget(Some(widget));
     group.add(&r);
@@ -103,9 +105,7 @@ where
 fn administrator_available() -> Result<(), String> {
     // Never ask a desktop agent to authenticate. The installed rule grants this
     // helper only; installation or missing authorization is a separate handoff.
-    output("/usr/bin/pkcheck", &["--action-id", "io.github.jtmb.Tend.manage",
-        "--process", &std::process::id().to_string(), "--detail", "program",
-        "/usr/local/libexec/tend-admin"])
+    tend::queries::run(Command::new("/usr/bin/pkcheck").args(["--action-id","io.github.jtmb.Tend.manage","--process",&std::process::id().to_string(),"--detail","program","/usr/local/libexec/tend-admin"]),Duration::from_secs(3),8192)
         .map_err(|_| "Tend administrator authorization is unavailable. No password prompt was opened. Complete the documented helper setup to enable this action.".to_string())?;
     Ok(())
 }
@@ -515,10 +515,17 @@ fn build(app: &adw::Application) {
             }
         }
     });
+    {
+        let(t,b)=(theme.downgrade(),background.downgrade());
+        settings_ui::register(tend::settings_bundle::Section::Appearance,||false,move|value|{
+            if let Ok(v)=serde_json::from_value::<tend::settings_bundle::Appearance>(value.clone()) {if let Some(t)=t.upgrade(){t.set_selected(v.theme as u32);}if let Some(b)=b.upgrade(){b.set_active(v.close_to_panel);}}
+        });
+    }
     care.append(&appearance);
     health_ui::install(app);
     health_ui::add(&care,&win,app);
     history_ui::add(&care,&win);
+    settings_ui::add(&care,&win,app,&stack);
     care.append(&label("Tend 0.2", "caption"));
     stack.add_titled(&scroll(&care), Some("care"), "Preferences");
     activity_ui::add(&stack,&win);
@@ -621,6 +628,8 @@ fn build(app: &adw::Application) {
         docs_demo::panel_qa(&win, &outer, panel_ready, &path);
         return;
     }
+    #[cfg(feature="docs-demo")]
+    if let Ok(directory)=std::env::var("TEND_BUNDLE_QA") {docs_demo::bundle_qa(app,&win,&outer,&stack,&directory);return;}
     #[cfg(feature="docs-demo")]
     if let Ok(directory)=std::env::var("TEND_HEALTH_QA") {
         docs_demo::health_qa(app,&win,&outer,&stack,&directory);return;
@@ -756,6 +765,6 @@ fn main() -> glib::ExitCode {
             build(app);
         }
     });
-    app.connect_shutdown(|_| {health_ui::shutdown();monitor::shutdown();});
+    app.connect_shutdown(|_| {settings_ui::shutdown();health_ui::shutdown();monitor::shutdown();});
     app.run()
 }

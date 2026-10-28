@@ -92,6 +92,19 @@ class AdminSandboxTests(unittest.TestCase):
         # sandbox mounts them read-only; avoid a new multi-MiB copy per test.
         Path('/tmp/opencode').mkdir(exist_ok=True)
         cls.binaries=Path(tempfile.mkdtemp(prefix='tend-qa-binaries-',dir='/tmp/opencode'))
+        # An ELF verifier checks argv and controlled failure without writing
+        # files or contacting a desktop bus from the notification subprocess.
+        cls.notification=cls.binaries/'notify-send'
+        source=r'''#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int main(int argc,char **argv){
+ if(argc!=5||strcmp(argv[1],"--app-name=Tend")||strcmp(argv[2],"--icon=io.github.jtmb.Tend")||strcmp(argv[3],"Maintenance in 60 minutes")||strcmp(argv[4],"Updates and cleanup begin at 08:00 Toronto time."))return 51;
+ const char *fail=getenv("TEND_SANDBOX_FAIL");if(fail&&strcmp(fail,"notify-send")==0){fputs("Controlled notification failure\n",stderr);return 23;}return 0;
+}
+'''
+        subprocess.run(['nice','-n','10','ionice','-c','3','cc','-x','c','-o',str(cls.notification),'-'],input=source,text=True,capture_output=True,check=True)
+        cls.notification.chmod(0o755)
         for name in ('tend-admin','tend-worker'):
             target=cls.binaries/name
             shutil.copyfile(ROOT/'target/debug'/name,target);target.chmod(0o755)
@@ -128,6 +141,7 @@ class AdminSandboxTests(unittest.TestCase):
 
     def write(self,name,text):
         p=self.stage/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+        p.chmod(0o600 if name.startswith('home/james/.config/tend/') else 0o644)
         return p
 
     def invoke(self,action,data=None,*extra,fail='',uid='0',api=False,engine=False):
@@ -150,7 +164,7 @@ class AdminSandboxTests(unittest.TestCase):
                 '--ro-bind',str(ROOT/'target/debug/examples/qa-api' if api else BINARY),'/qa/tend-admin']
         for command in ['id','getent','systemctl','apt-get','apt-config',
                         'unattended-upgrade','date','notify-send','df','crontab','gsettings','docker']:
-            cmd += ['--ro-bind',str(self.stage/'qa/mock-command'),'/usr/bin/'+command]
+            cmd += ['--ro-bind',str(self.notification if command=='notify-send' else self.stage/'qa/mock-command'),'/usr/bin/'+command]
         entrypoint=['/qa/tend-admin']
         if engine:
             assert engine is True or engine=='qa-engine.py'
@@ -250,13 +264,38 @@ class AdminSandboxTests(unittest.TestCase):
         self.assertFalse(any(c['program']=='notify-send' for c in self.commands()))
 
     def test_warning_dispatch(self):
-        result=self.invoke('notify',None,'60')
-        if result.returncode and not any(c['program']=='notify-send' for c in self.commands()):
-            self.assertTrue(any(c['program']=='date' for c in self.commands()))
-            self.assertIn('signal: 11 (SIGSEGV)',result.stderr)
-            self.skipTest('Mock notify-send exits with SIGSEGV in this namespace; delivery remains unverified')
-        self.assert_ok(result)
-        self.assertTrue(any(c['program']=='notify-send' for c in self.commands()))
+        self.assert_ok(self.invoke('notify',None,'60'))
+        failed=self.invoke('notify',None,'60',fail='notify-send')
+        self.assertNotEqual(failed.returncode,0)
+        self.assertIn('Controlled notification failure',failed.stderr)
+        # The verifier returns 23 only after matching every actual argument.
+        self.assertEqual(failed.stderr.strip(),'Controlled notification failure')
+        self.write('etc/tend/settings.json',json.dumps({**SETTINGS,'enabled':False}))
+        self.assert_ok(self.invoke('notify',None,'60',fail='notify-send'))
+
+    def test_reviewed_user_settings_compare_under_lock_and_preserve_other_jobs(self):
+        (self.stage/'home/james/cache').mkdir()
+        self.write('qa/crontab','# existing job\n0 12 * * * echo keep\n')
+        cases={'monitoring':{'hold_seconds':120},'history':{'max_mib':256,'retention_days':14},
+               'workspaces':{'projects':[{'id':'fixture-project','name':'Fixture','root':'/home/james/project'}]},
+               'manual_cleanup':{'age_days':28},
+               'folder_rules':{'rules':[{'name':'Cache','folder':'/home/james/cache','pattern':'*.log','days':14,'recursive':False,'enabled':False}]},
+               'user_schedule':{'enabled':False,'expression':'15 8 * * *','catch_up':False}}
+        for section,changes in cases.items():
+            with self.subTest(section=section):
+                encoded=json.dumps(section)
+                current=self.invoke('settings-current',None,encoded,api=True);self.assert_ok(current)
+                expected=json.loads(current.stdout);value={**expected,**changes}
+                saved=self.invoke('settings-checked',None,encoded,json.dumps(expected),json.dumps(value),api=True);self.assert_ok(saved)
+                actual=self.invoke('settings-current',None,encoded,api=True);self.assert_ok(actual);self.assertEqual(json.loads(actual.stdout),value)
+                commands=len(self.commands())
+                stale=self.invoke('settings-checked',None,encoded,json.dumps(expected),json.dumps(expected),api=True)
+                self.assertNotEqual(stale.returncode,0);self.assertIn('changed',stale.stderr.lower());self.assertEqual(len(self.commands()),commands)
+                actual=self.invoke('settings-current',None,encoded,api=True);self.assertEqual(json.loads(actual.stdout),value)
+        self.assertIn('0 12 * * * echo keep',(self.stage/'qa/crontab').read_text())
+        self.assertNotIn('tend-worker',(self.stage/'qa/crontab').read_text())
+        self.assertFalse((self.stage/'home/james/.local/state/tend/history.sqlite3').exists())
+        self.assertFalse(any(c['program']=='systemctl' for c in self.commands()))
 
     def test_daily_policy_validation_backup_and_missing_integration(self):
         changed={**POLICY,'build_days':60,'keep_gb':9}

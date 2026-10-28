@@ -111,6 +111,17 @@ pub fn tooltip() -> String {
         None => text,
     }
 }
+pub fn reload(app: &adw::Application) {
+    match Settings::read() {
+        Ok(settings) => apply(app, &settings),
+        Err(e) => {
+            if let Some(r) = runtime() {
+                r.borrow_mut().error = Some(e);
+            }
+            refresh();
+        }
+    }
+}
 pub fn enabled() -> bool {
     runtime().is_some_and(|r| r.borrow().settings.enabled)
 }

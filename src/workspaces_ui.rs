@@ -605,6 +605,12 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow, location: workbench
         }
         glib::Propagation::Proceed
     });
+    {
+        let pending=Rc::downgrade(&state);let(n,p)=(name.downgrade(),path.downgrade());let update=Rc::downgrade(&state);
+        crate::settings_ui::register(tend::settings_bundle::Section::Workspaces,move||pending.upgrade().is_some_and(|s|s.dirty()||n.upgrade().is_some_and(|e|!e.text().is_empty())||p.upgrade().is_some_and(|e|!e.text().is_empty())),move|value|{
+            if let(Some(s),Ok(v))=(update.upgrade(),serde_json::from_value::<Settings>(value.clone())){s.subscription.borrow_mut().take();s.associations.borrow_mut().clear();s.docker.borrow_mut().take();s.loaded.set(true);*s.draft.borrow_mut()=v.clone();*s.baseline.borrow_mut()=v;s.footer.success();s.render();}
+        });
+    }
     stack.add_titled(
         &editor::shell(&body, &footer),
         Some("workspaces"),

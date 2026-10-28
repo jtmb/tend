@@ -353,18 +353,17 @@ impl Cleanup {
         Self::read_from(&home().join(".config/tend/cleanup.json"))
     }
     pub fn read_from(path: &Path) -> Result<Self, String> {
-        let value = match fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str::<Self>(&s)
-                .map_err(|e| format!("Saved cleanup policy is invalid: {e}"))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
-            Err(e) => return Err(format!("Cannot read saved cleanup policy: {e}")),
+        let value=match crate::config_io::read(path,8192,Some(unsafe{libc::geteuid()}),false)? {
+            Some(s)=>serde_json::from_slice::<Self>(&s).map_err(|e|format!("Saved cleanup policy is invalid: {e}"))?,None=>Self::default()
         };
         value.validate()?;
         Ok(value)
     }
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&self) -> Result<(), String> {self.save_checked(None)}
+    pub fn save_checked(&self,expected:Option<&Self>)->Result<(),String>{
         self.validate()?;
         let _lock = crate::cleanup_rules::cleanup_lock()?;
+        if let Some(expected)=expected {let normalize=|p:&Self|{let mut p=p.clone();p.image_days=Some(p.image_days());p.thumbnail_days=Some(p.thumbnail_days());p};if normalize(&Self::load()?)!=normalize(expected){return Err("Saved cleanup policy changed. Review again.".into());}}
         private_write(
             &home().join(".config/tend/cleanup.json"),
             &serde_json::to_string_pretty(self).unwrap(),

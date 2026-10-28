@@ -331,6 +331,7 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             );
         }
     });
+    crate::settings_ui::invalidator(tend::settings_bundle::Section::ManualCleanup,invalidate.clone());
     saves.insert(&crate::exclusions_ui::button(win, invalidate.clone()), -1);
     controls.changed(changed);
     let extra = crate::cleanup_ui::section(win, invalidate.clone());
@@ -344,6 +345,12 @@ pub fn manual(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     });
     let c = controls.clone();
     defaults.connect_clicked(move |_| c.set_manual(&w::Cleanup::default()));
+    {
+        let(f,c,s)=(footer.clone(),controls.clone(),saved.clone());let pending=footer.clone();
+        crate::settings_ui::register(tend::settings_bundle::Section::ManualCleanup,move||pending.pending(),move|value|{
+            if let Ok(policy)=serde_json::from_value::<w::Cleanup>(value.clone()){*s.borrow_mut()=Some(policy.clone());c.set_manual(&policy);f.success();}
+        });
+    }
     let (c, s, out, parent) = (controls.clone(), saved.clone(), footer.clone(), win.clone());
     save.connect_clicked(move |_| {
         let policy = c.manual(); let (s, out) = (s.clone(), out.clone());
@@ -481,6 +488,7 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             report_hint(&view,"Preview this draft to review its current actions. No maintenance runs from a preview.");
         }
     });
+    crate::settings_ui::invalidator(tend::settings_bundle::Section::DailyCleanup,invalidate.clone());
     bar.insert(&crate::exclusions_ui::button(win, invalidate.clone()), -1);
     let (c, s, out, preview_view) = (
         controls.clone(),
@@ -526,6 +534,12 @@ pub fn daily(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             },
         );
     });
+    {
+        let(f,c,s)=(footer.clone(),controls.clone(),saved.clone());let pending=footer.clone();
+        crate::settings_ui::register(tend::settings_bundle::Section::DailyCleanup,move||pending.pending(),move|value|{
+            if let Ok(policy)=serde_json::from_value::<daily::Policy>(value.clone()){*s.borrow_mut()=Some(policy.clone());c.set_daily(&policy);f.success();}
+        });
+    }
     let (parent, out, editor) = (win.clone(), footer.clone(), p.clone());
     save.connect_clicked(move |_| {
         let policy = controls.daily();

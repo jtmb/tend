@@ -71,7 +71,11 @@ impl Settings {
         value.validate()?;
         Ok(value)
     }
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&self) -> Result<(), String> {self.save_checked(None)}
+    pub fn save_checked(&self,expected:Option<&Self>)->Result<(),String>{
+        self.validate()?;let _guard=crate::config_io::lock(&w::home().join(".config/tend/history.json"))?;
+        if let Some(expected)=expected{if Self::read()?!=*expected{return Err("Saved settings changed. Review again before saving.".into());}}
+
         self.validate()?;
         w::private_write(
             &w::home().join(".config/tend/history.json"),

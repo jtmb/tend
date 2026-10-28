@@ -65,25 +65,17 @@ impl Settings {
         Ok(())
     }
     pub fn read() -> Result<Self, String> {
-        let settings = match fs::File::open(w::home().join(".config/tend/workspaces.json")) {
-            Ok(file) => {
-                let mut bytes = Vec::new();
-                file.take(256 * 1024 + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|e| e.to_string())?;
-                if bytes.len() > 256 * 1024 {
-                    return Err("Workspace settings exceed 256 KiB.".into());
-                }
-                serde_json::from_slice(&bytes)
-                    .map_err(|e| format!("Invalid workspace settings: {e}"))?
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
-            Err(e) => return Err(e.to_string()),
+        let settings:Self=match crate::config_io::read(&w::home().join(".config/tend/workspaces.json"),256*1024,Some(unsafe{libc::geteuid()}),false)? {
+            Some(bytes)=>serde_json::from_slice(&bytes).map_err(|e|format!("Invalid workspace settings: {e}"))?,None=>Self::default()
         };
         settings.validate()?;
         Ok(settings)
     }
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&self) -> Result<(), String> {self.save_checked(None)}
+    pub fn save_checked(&self,expected:Option<&Self>)->Result<(),String>{
+        self.validate()?;let _guard=crate::config_io::lock(&w::home().join(".config/tend/workspaces.json"))?;
+        if let Some(expected)=expected{if Self::read()?!=*expected{return Err("Saved settings changed. Review again before saving.".into());}}
+
         self.validate()?;
         w::private_write(
             &w::home().join(".config/tend/workspaces.json"),

@@ -12,7 +12,7 @@ import subprocess
 import resource
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity', 'health'])
+parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity', 'health', 'bundles'])
 parser.add_argument('--parent',type=Path,default=Path('/tmp/opencode'),help='Retained fixture directory; history tests require at least 2 GiB free')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
@@ -89,6 +89,16 @@ elif args.mode == 'accessibility':
                 run(name,['target/debug/tend'],settings|{'TEND_SCREENSHOT':str(path),'TEND_SCREENSHOT_PAGE':page,'TEND_QA_WIDTH':'960' if variant == 'scale-200' else '720'})
                 assert path.is_file()
                 records.append({'variant':variant,'theme':theme,'page':page,'image':str(path)})
+elif args.mode == 'bundles':
+    run('bundles',['target/debug/tend'],{'TEND_BUNDLE_QA':str(root/'bundles')},screen='1600x1000x24')
+    print((root/'bundles/bundle-evidence.json').read_text(),flush=True)
+    import hashlib
+    expected=json.loads((root/'manifest.json').read_text())
+    for name,fingerprint in expected.items():
+        if name.endswith('/cleanup.json') or name.endswith('/rules.json'):continue
+        p=root/name
+        assert p.stat().st_size==fingerprint['bytes'] and p.stat().st_mtime_ns==fingerprint['mtime_ns'] and hashlib.sha256(p.read_bytes()).hexdigest()==fingerprint['sha256'],name
+    print('All four cache/journal inputs preserved exactly; only intended fixture settings changed',flush=True)
 elif args.mode == 'health':
     current=env.copy();current.pop('DBUS_SESSION_BUS_ADDRESS')
     current['TEND_HEALTH_QA']=str(root/'health')
@@ -112,7 +122,7 @@ elif args.mode == 'gallery':
         run(asset,['target/debug/tend'],{'TEND_SCREENSHOT':str(path),'TEND_SCREENSHOT_PAGE':page,'TEND_QA_WIDTH':'1100','TEND_QA_HEIGHT':'720','TEND_TASK_TAB':'performance'})
         assert path.is_file()
         records.append({'page':page,'asset':asset,'image':str(path)})
-if args.mode != 'matrix':
+if args.mode not in ('matrix','bundles'):
     subprocess.run(['python3','docs/demo/prepare.py','--verify',str(root)],check=True)
 (output/'capture-index.json').write_text(json.dumps(records,indent=2)+'\n')
 print('Evidence:',root,flush=True)

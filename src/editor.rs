@@ -131,6 +131,7 @@ impl Footer {
         result.refresh();
         result
     }
+    pub fn pending(&self)->bool{self.dirty.get()||self.busy.get()}
     pub fn sync(&self, dirty: bool, valid: bool) {
         self.dirty.set(dirty);
         self.valid.set(valid);

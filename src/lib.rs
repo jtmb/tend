@@ -4,6 +4,8 @@ pub mod diagnostics;
 pub mod exclusions;
 pub mod queries;
 pub mod health;
+pub mod config_io;
+pub mod settings_bundle;
 pub mod activity;
 pub mod workspaces;
 use std::{fs, process::Command};

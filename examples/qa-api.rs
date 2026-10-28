@@ -77,6 +77,8 @@ fn main() {
     );
     let args: Vec<_> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
+        Some("settings-current")=>serde_json::from_str::<tend::settings_bundle::Section>(&args[1]).map_err(|e|e.to_string()).and_then(|section|section.current()).and_then(|v|serde_json::to_string(&v).map_err(|e|e.to_string())),
+        Some("settings-checked")=>(||{let section: tend::settings_bundle::Section=serde_json::from_str(&args[1]).map_err(|e|e.to_string())?;let expected=serde_json::from_str(&args[2]).map_err(|e|e.to_string())?;let value=serde_json::from_str(&args[3]).map_err(|e|e.to_string())?;section.save_user(&value,&expected)?;Ok("Reviewed user settings saved in namespace fixture.".into())})(),
         Some("schedule") => serde_json::from_str::<Schedule>(&args[1])
             .map_err(|e| e.to_string())
             .and_then(|s| s.save()),

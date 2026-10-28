@@ -259,6 +259,12 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
             d.present();
         }
     });
+    {
+        let(p,r,c)=(policy.clone(),rebuild.clone(),changed.clone());
+        crate::settings_ui::register(tend::settings_bundle::Section::FolderRules,||false,move|value|{
+            if let Ok(v)=serde_json::from_value::<rules::Policy>(value.clone()){*p.borrow_mut()=v;r();c();}
+        });
+    }
     let e = editor.clone();
     add.connect_clicked(move |_| e(None));
     let e = editor;
@@ -471,6 +477,12 @@ pub fn schedule_page(stack: &gtk::Stack) {
     }
     let f = update.clone();
     expression.connect_changed(move |_| f());
+    {
+        let(pending,f,s,en,h,m,d,e,catch,mode)=(footer.clone(),footer.clone(),baseline.clone(),enabled.clone(),hour.clone(),minute.clone(),day.clone(),expression.clone(),catchup.clone(),mode.clone());
+        crate::settings_ui::register(tend::settings_bundle::Section::UserSchedule,move||pending.pending(),move|value|{
+            if let Ok(v)=serde_json::from_value::<rules::Schedule>(value.clone()){*s.borrow_mut()=v.clone();let simple=v.simple_time().unwrap_or((2,10,0,0));en.set_active(v.enabled);h.set_value(simple.1 as f64);m.set_value(simple.2 as f64);d.set_selected(simple.3);e.set_text(&v.expression);catch.set_active(v.catch_up);mode.set_selected(simple.0);f.success();}
+        });
+    }
     let saved = baseline.clone();
     footer.discard.connect_clicked(move |_| {
         let s = saved.borrow();

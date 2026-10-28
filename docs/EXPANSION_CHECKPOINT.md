@@ -301,3 +301,56 @@ resource/interaction gates and ten-minute enabled monitoring; complete design
 and accessibility matrix; real-workflow README demo; matching backed-up
 deployment and publication. Existing applications and system policies are
 untouched, and the goal remains active.
+
+## Phase 7 — settings transfer checkpoint
+
+All twelve features now have source implementations. This is not a release or
+proof of the remaining optimized resource/accessibility/deployment gates.
+
+- Versioned, whitelisted settings bundles export ten preference/policy sections.
+  Files are owner-only; credentials, restart/login/auth settings, raw histories
+  and machine-level tuning are excluded. Unknown fields/versions and oversized
+  or non-regular inputs are rejected. Leaf symlinks are not followed.
+- Import shows a complete paginated per-section comparison, ordered naturally
+  for array indices. Loading creates inactive private drafts only. Jobs,
+  monitoring and folder rules start disabled in those drafts; no active setting
+  changes until the user explicitly saves a reviewed section.
+- Native forms cover all sections, including bounded project/rule/path lists,
+  field validation, Add/Remove from draft and page-local Save/Discard. The
+  existing pages refresh after a save. Existing unsaved drafts are preserved.
+- User setting writers compare expected values after acquiring their shared
+  save lock. The native concurrent-history test and isolated contracts for all
+  six user writers verify stale saves are refused without changing files/jobs.
+  The receiving exclusions revision and existing restart behavior are retained.
+- Import actions are single-flight. Picker cancellation and export failures
+  re-enable controls. Leaving Preferences invalidates pending loads immediately
+  on selection change, including during GTK animations. Closing a comparison
+  cancels its pending review. Old array/discard widgets have generation guards.
+- Every review/comparison tracks and disconnects its signal graph on close;
+  native tests confirm released Save widgets. Shared control rows now expose
+  accessible labels/descriptions. Full accessibility evaluation remains pending.
+- Administrator checks are bounded; capability checks happen on the review
+  worker. Root and cron saves remain blocked in the isolated native preview;
+  no production authentication/scheduling action is used for testing.
+- Current authoritative checks: 89 library tests plus one panel test passed;
+  one existing fixture-deletion test is intentionally ignored. All 57 Python
+  tests passed with no skips. The former notification-script SIGSEGV is replaced
+  by a no-I/O ELF argument verifier with positive, forced-failure and disabled
+  dispatch checks. This proves helper dispatch, not physical desktop display;
+  actual notification protocol delivery is separately tested on a private bus.
+- Native settings transfer passes all ten sections, complete diff paging,
+  Save/Discard, errors/cancel/retry, stale/concurrent state and callback lifetime.
+  Fixture: ../performance/native-fixtures/tend-workflow-fipxv61f. Monitoring and
+  history regression: tend-workflow-bhwlzac_. Full existing visual matrix:
+  tend-workflow-sb8q7fs7. Cache/journal input bytes and timestamps are preserved;
+  only intended fixture settings changed. No GTK warnings/criticals were found.
+- Logs: ../performance/tend-expansion-phase7-bundle-{rust,build,native,health,
+  matrix,python}.log. See SETTINGS_TRANSFER.md for the actual format and workflow.
+
+Remaining: final audit of all requirements and error boundaries (including
+appearance multi-file failures and monitoring-review units), optimized full-app
+baseline/comparison and ten-minute enabled monitoring, interaction/resource
+gates, complete accessibility/large-text/scale/contrast and design passes,
+real-workflow README/GIF refresh, matching backed-up deployment and publication.
+Nothing is installed or published by this checkpoint. No existing application,
+restart/login/auth policy or real system/user job has been changed.

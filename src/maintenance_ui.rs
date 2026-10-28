@@ -127,6 +127,42 @@ pub fn add(stack: &gtk::Stack, _win: &adw::ApplicationWindow) {
         let f = changed.clone();
         s.connect_value_changed(move |_| f());
     }
+    {
+        let (pending, f, s, en, h, m, a, b, c) = (
+            footer.clone(),
+            footer.clone(),
+            baseline.clone(),
+            enabled.clone(),
+            hour.clone(),
+            minute.clone(),
+            w60.clone(),
+            w30.clone(),
+            w15.clone(),
+        );
+        crate::settings_ui::register(
+            tend::settings_bundle::Section::Maintenance,
+            move || pending.pending(),
+            move |value| {
+                if let Ok(v) =
+                    serde_json::from_value::<tend::settings_bundle::Maintenance>(value.clone())
+                {
+                    if let Some(saved) = s.borrow_mut().as_mut() {
+                        saved.enabled = v.enabled;
+                        saved.hour = v.hour;
+                        saved.minute = v.minute;
+                        saved.warnings = v.warnings;
+                    }
+                    en.set_active(v.enabled);
+                    h.set_value(v.hour as f64);
+                    m.set_value(v.minute as f64);
+                    a.set_active(v.warnings[0]);
+                    b.set_active(v.warnings[1]);
+                    c.set_active(v.warnings[2]);
+                    f.success();
+                }
+            },
+        );
+    }
     let saved = baseline.clone();
     footer.discard.connect_clicked(move |_| {
         if let Some(s) = saved.borrow().as_ref() {

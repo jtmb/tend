@@ -99,14 +99,14 @@ impl Rule {
 }
 impl Policy {
     pub fn load() -> Result<Self, String> {
-        match fs::read_to_string(w::home().join(".config/tend/rules.json")) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| e.to_string()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e.to_string()),
+        match crate::config_io::read(&w::home().join(".config/tend/rules.json"),512*1024,Some(unsafe{libc::geteuid()}),false)? {
+            Some(s)=>serde_json::from_slice(&s).map_err(|e|e.to_string()),None=>Ok(Self::default())
         }
     }
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&self) -> Result<(), String> {self.save_checked(None)}
+    pub fn save_checked(&self,expected:Option<&Self>)->Result<(),String>{
         let _lock = cleanup_lock()?;
+        if let Some(expected)=expected{if Self::load()?!=*expected{return Err("Saved cleanup rules changed. Review again.".into());}}
         if self.rules.len() > 64 {
             return Err("At most 64 rules are supported.".into());
         }
@@ -361,15 +361,15 @@ impl Schedule {
         }
     }
     pub fn load() -> Result<Self, String> {
-        match fs::read_to_string(w::home().join(".config/tend/cleanup-schedule.json")) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| e.to_string()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e.to_string()),
+        match crate::config_io::read(&w::home().join(".config/tend/cleanup-schedule.json"),8192,Some(unsafe{libc::geteuid()}),false)? {
+            Some(s)=>serde_json::from_slice(&s).map_err(|e|e.to_string()),None=>Ok(Self::default())
         }
     }
-    pub fn save(&self) -> Result<String, String> {
+    pub fn save(&self) -> Result<String, String> {self.save_checked(None)}
+    pub fn save_checked(&self,expected:Option<&Self>)->Result<String,String>{
         validate_cron(&self.expression)?;
         let _lock = cleanup_lock()?;
+        if let Some(expected)=expected{if Self::load()?!=*expected{return Err("Saved cleanup schedule changed. Review again.".into());}}
         let old = std::process::Command::new("/usr/bin/crontab")
             .arg("-l")
             .output()
