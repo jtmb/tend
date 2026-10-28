@@ -45,12 +45,17 @@ schedule/trigger restarts. Detailed evidence remains in EXPANSION_CHECKPOINT.md.
 ### Current checkpoint and next execution order
 
 The ledger records implementation evidence, not completion of a release. Source
-checkpoint `df410c4` adds stable process-row reuse, paced population, visible-view
-rendering and log date-cache invalidation at Toronto midnight. Native process
-workflows and targeted identity/date tests pass. Debug interaction feedback still
-exceeds 100 ms in some views; it is not an optimized release result. Earlier
-normal-priority optimized comparisons also miss the target, so desktop priority
-alone did not resolve it.
+checkpoints `df410c4` and `2f698ae` include stable process-row reuse, paced
+population, visible-view rendering, log date-cache invalidation at Toronto
+midnight and compact editable retention disclosures. The latter optimized build
+passes all nine ten-minute resource gates, but two of its 63 interaction
+observations still exceed 100 ms (worst 127.686 ms). Newer first-paint lifecycle
+and collector-thread-priority changes pass 97 Rust tests and optimized native
+workflows, including automatic sampling and cancellation before paint. Their
+optimized interaction repeat still misses the target on Disk cleanup (111.186 ms)
+and Maintenance (109.361 ms), with the other 61 observations passing. Final
+resource/accessibility/demo reconciliation and delivery remain pending. Earlier
+passing resource or interaction runs do not establish the latest source's result.
 
 1. Freeze the current source; run the full Rust checks and build an immutable
    optimized candidate. Retain its hash and exact test scope.

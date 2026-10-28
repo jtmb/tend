@@ -49,13 +49,21 @@ fn thread_cpu_ns() -> u64 {
     }
     (time.tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(time.tv_nsec as u64)
 }
-type PendingFeedback = Rc<RefCell<Option<(Instant, u64)>>>;
+fn thread_queue_ns() -> Option<u64> {
+    std::fs::read_to_string("/proc/thread-self/schedstat").ok()?
+        .split_whitespace().nth(1)?.parse().ok()
+}
+fn queue_wait_ms(start: Option<u64>) -> Option<f64> {
+    thread_queue_ns()?.checked_sub(start?).map(|n| n as f64 / 1_000_000.)
+}
+type PendingFeedback = Rc<RefCell<Option<(Instant, u64, Option<u64>)>>>;
 fn frame_phase(name: &str, pending: &PendingFeedback, phases: &RefCell<Vec<serde_json::Value>>) {
-    if let Some((start, cpu)) = *pending.borrow() {
+    if let Some((start, cpu, queue)) = *pending.borrow() {
         phases.borrow_mut().push(json!({
             "phase": name,
             "elapsed_ms": start.elapsed().as_secs_f64() * 1000.,
             "main_thread_cpu_ms": thread_cpu_ns().saturating_sub(cpu) as f64 / 1_000_000.,
+            "run_queue_wait_ms": queue_wait_ms(queue),
         }));
     }
 }
@@ -123,10 +131,11 @@ pub fn run(
         let paint = clock.connect_paint(move |_| frame_phase("paint", &p, &trace));
         let (p, l, trace, details) = (pending.clone(), latency.clone(), phases.clone(), feedback_details.clone());
         let signal = clock.connect_after_paint(move |_| {
-            if let Some((start, cpu)) = p.borrow_mut().take() {
+            if let Some((start, cpu, queue)) = p.borrow_mut().take() {
                 l.borrow_mut().push(start.elapsed().as_secs_f64() * 1000.);
                 details.borrow_mut().push(json!({
                     "main_thread_cpu_ms": thread_cpu_ns().saturating_sub(cpu) as f64 / 1_000_000.,
+                    "run_queue_wait_ms": queue_wait_ms(queue),
                     "phases": trace.borrow_mut().drain(..).collect::<Vec<_>>(),
                 }));
             }
@@ -142,7 +151,7 @@ pub fn run(
                 let target=button(&outer,title);
                 let lookup_ms=lookup.elapsed().as_secs_f64()*1000.;
                 phases.borrow_mut().clear();
-                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns()));
+                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns(), thread_queue_ns()));
                 let callback=Instant::now();
                 target.emit_clicked();
                 let callback_ms=callback.elapsed().as_secs_f64()*1000.;
@@ -166,7 +175,7 @@ pub fn run(
         for repeat in 0..3 {
             for (selection, count) in [(1, 2), (0, 6)] {
                 phases.borrow_mut().clear();
-                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns()));
+                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns(), thread_queue_ns()));
                 severity.set_selected(selection);
                 win.queue_draw();
                 until(|| pending.borrow().is_none());
@@ -212,7 +221,7 @@ pub fn run(
         for repeat in 0..3 {
             for (selected, count) in [(1, 500), (0, 1000)] {
                 phases.borrow_mut().clear();
-                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns()));
+                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns(), thread_queue_ns()));
                 severity.set_selected(selected);
                 win.queue_draw();
                 until(|| pending.borrow().is_none());

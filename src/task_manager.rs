@@ -28,6 +28,46 @@ struct State {
     traces: BTreeMap<String, Trace>,
     diagnostics: String,
 }
+// Cancelled when the page loses focus, hides, changes speed or is left before
+// its first frame. Full /proc collection must not compete with initial paint.
+struct PaintRequest {
+    clock: glib::WeakRef<gtk::gdk::FrameClock>,
+    handler: Option<glib::SignalHandlerId>,
+}
+impl Drop for PaintRequest {
+    fn drop(&mut self) {
+        if let (Some(clock), Some(handler)) = (self.clock.upgrade(), self.handler.take()) {
+            clock.disconnect(handler);
+        }
+    }
+}
+fn after_paint(
+    window: &adw::ApplicationWindow,
+    pending: &Rc<RefCell<Option<PaintRequest>>>,
+    action: impl FnOnce() + 'static,
+) {
+    if let Some(clock) = window.frame_clock() {
+        let weak = Rc::downgrade(pending);
+        let action = RefCell::new(Some(action));
+        let handler = clock.connect_after_paint(move |_| {
+            let Some(pending) = weak.upgrade() else {
+                return;
+            };
+            pending.borrow_mut().take();
+            let action = action.borrow_mut().take();
+            if let Some(action) = action {
+                action();
+            }
+        });
+        *pending.borrow_mut() = Some(PaintRequest {
+            clock: clock.downgrade(),
+            handler: Some(handler),
+        });
+        window.queue_draw();
+    } else {
+        action();
+    }
+}
 fn rate(v: f64) -> String {
     format!("{}/s", w::bytes(v.max(0.) as u64))
 }
@@ -1035,8 +1075,11 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         );
     });
     let source = Rc::new(RefCell::new(None::<crate::monitor::Handle>));
+    let pending_paint = Rc::new(RefCell::new(None::<PaintRequest>));
     let source_close = source.clone();
+    let pending_close = pending_paint.clone();
     win.connect_close_request(move |_| {
+        pending_close.borrow_mut().take();
         source_close.borrow_mut().take();
         glib::Propagation::Proceed
     });
@@ -1047,7 +1090,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         let data = state.clone();
         let export = export.clone();
         let ui = ui.clone();
+        let pending_paint = pending_paint.clone();
         move || {
+            pending_paint.borrow_mut().take();
             source.borrow_mut().take();
             let (Some(stack), Some(speed)) = (stack.upgrade(), speed.upgrade()) else {
                 return;
@@ -1079,9 +1124,13 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                     return;
                 }
             };
-            let (data, ui) = (data.clone(), ui.clone());
+            if data.borrow().previous.is_none() {
+                ui.summary.set_text("Collecting live counters…");
+                ui.status.set_text("Collecting a fresh snapshot…");
+            }
+            let (data, ui, source) = (data.clone(), ui.clone(), source.clone());
             let failed = ui.clone();
-            match crate::monitor::subscribe(
+            let begin = move || match crate::monitor::subscribe(
                 tend::sampler::Detail::Full,
                 Duration::from_secs(seconds),
                 move |result| match result {
@@ -1107,6 +1156,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             ) {
                 Ok(handle) => *source.borrow_mut() = Some(handle),
                 Err(error) => failed.status.set_text(&error),
+            };
+            if let Some(window) = window.upgrade() {
+                after_paint(&window, &pending_paint, begin);
             }
         }
     });

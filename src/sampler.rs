@@ -137,6 +137,14 @@ impl Hub {
         let thread = std::thread::Builder::new()
             .name("tend-sampler".into())
             .spawn(move || {
+                // Linux niceness is per thread. Yield background collection
+                // under contention without lowering the GTK/input thread.
+                // This only lowers priority and needs no elevated privilege;
+                // unsupported/restricted environments keep their current value.
+                #[cfg(target_os = "linux")]
+                unsafe {
+                    libc::nice(5);
+                }
                 let mut previous_full: Option<Arc<Snapshot>> = None;
                 let mut previous_basic: Option<(Sample, Instant, Option<u64>)> = None;
                 loop {
@@ -309,6 +317,36 @@ mod tests {
                 None,
             ))
         }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn collector_yields_without_changing_the_requesting_threads_priority() {
+        use std::sync::atomic::AtomicI32;
+        struct PriorityProbe(Arc<AtomicI32>);
+        impl Provider for PriorityProbe {
+            fn collect(
+                &mut self,
+                _: Detail,
+                _: Option<&Snapshot>,
+            ) -> Result<(Sample, Option<Snapshot>), String> {
+                self.0.store(
+                    unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) },
+                    Ordering::SeqCst,
+                );
+                Ok((Sample::default(), None))
+            }
+        }
+        let caller = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+        let observed = Arc::new(AtomicI32::new(i32::MIN));
+        let hub = Hub::with_provider(PriorityProbe(observed.clone()), || {});
+        assert!(hub
+            .request(Detail::Basic)
+            .wait(Duration::from_secs(2))
+            .unwrap()
+            .is_ok());
+        assert_eq!(observed.load(Ordering::SeqCst), (caller + 5).min(19));
+        assert_eq!(unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) }, caller);
+        hub.shutdown();
     }
     #[test]
     fn sleeps_with_no_demand_and_stops_after_last_subscription() {

@@ -2102,7 +2102,15 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         button(&workspace,"Remove from draft").emit_clicked();button(&workspace,"Discard changes").emit_clicked();assert!(text(&workspace).contains("QA workspace"));
         button(&workspace,"Remove from draft").emit_clicked();button(&workspace,"Save changes").emit_clicked();assert!(wait_until(||text(&workspace).contains("Workspace settings saved"),Duration::from_secs(15)));assert!(tend::workspaces::Settings::read().unwrap().projects.is_empty());
         evidence.push(json!({"workspace_add_edit_save_discard_remove":true,"workspace_live_cwd_mapping":true,"workspace_compose_label_fixture":true,"workspace_cached_scan":true,"workspace_storage_navigation":true,"no_project_files_changed":fixture.join("beta").exists()}));
-        let task=page(&stack,"task-manager");stack.set_visible_child_name("task-manager");refresh(&stack);
+        let task=page(&stack,"task-manager");
+        let before_page=crate::monitor::budget_stats()["collections"].as_u64().unwrap();
+        stack.set_visible_child_name("task-manager");
+        assert_eq!(crate::monitor::budget_stats()["subscribers"].as_u64().unwrap(),0,"Sampling competed with the initial page paint");
+        stack.set_visible_child_name("storage");
+        wait_main_context(Duration::from_millis(150));
+        assert_eq!(crate::monitor::budget_stats()["collections"].as_u64().unwrap(),before_page,"Leaving before paint still collected processes");
+        assert_eq!(crate::monitor::budget_stats()["subscribers"].as_u64().unwrap(),0);
+        stack.set_visible_child_name("task-manager");
         let process=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();
         assert!(wait_for_task_rows(&process.model().unwrap(),Duration::from_secs(15)));
         let tabs=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::Stack>().ok()).find(|s|s.child_by_name("apps").is_some()).unwrap();
@@ -2119,7 +2127,7 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         let current=(0..model.n_items()).find_map(|i|{let object=model.item(i).unwrap().downcast::<glib::BoxedAnyObject>().unwrap();let own=object.borrow::<tend::task_stats::Task>().pid==std::process::id();own.then_some(object)}).unwrap();
         assert_eq!(own.1,current,"A live refresh replaced a surviving process row");
         assert_eq!(model.clone().downcast::<gtk::SingleSelection>().unwrap().selected_item().unwrap(),current.upcast::<glib::Object>(),"Live refresh lost the selected process");
-        evidence.push(json!({"complete_staged_process_population":total,"stable_live_row_objects_and_selection":true}));
+        evidence.push(json!({"complete_staged_process_population":total,"stable_live_row_objects_and_selection":true,"automatic_sampling_after_first_paint":true,"leave_before_paint_cancels_collection":true}));
         let process_search=descendants(&tabs.child_by_name("processes").unwrap()).into_iter().find_map(|w|w.downcast::<gtk::SearchEntry>().ok()).unwrap();
         for name in ["apps","process-tree"] {
             tabs.set_visible_child_name(name);wait_main_context(Duration::from_millis(150));

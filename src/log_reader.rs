@@ -97,6 +97,8 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     empty.append(&empty_title);
     empty.append(&empty_description);
     let results = gtk::Stack::new();
+    results.set_hhomogeneous(false);
+    results.set_vhomogeneous(false);
     results.add_named(&empty, Some("empty"));
     results.add_named(&list, Some("events"));
     results.set_visible_child_name("empty");

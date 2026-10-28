@@ -30,11 +30,15 @@ installation or a guarantee about external package repositories/desktop hosts.
   query completion nor physical GPU latency is measured by this result. The
   later low-priority repeat completes functional checks but misses the latency
   target (worst 2266.105 ms); its normal desktop-priority repeat also fails
-  (1957.126 ms). Latest process-row/hidden-view/date-cache fixes require optimized
-  verification using the corrected callback-to-paint harness. Native expansion
+  (1957.126 ms). The newer optimized first-paint/collector-priority artifact
+  completes all functional checks but still fails on Disk cleanup (111.186 ms)
+  and Maintenance (109.361 ms); the other 61 observations are below 100 ms.
+  Its run-queue counters show 33.865 and 30.395 ms of waiting on those actions;
+  this is evidence of contention, not an exemption from the gate. Native expansion
   checks pass stable selection, complete staged population, process links through
-  excluding searches and Quit during population; they are not latency evidence.
-- **Error boundaries:** 96 Rust tests passed, one legacy fixture-deletion test
+  excluding searches, automatic sampling after paint, cancellation before paint
+  and Quit during population; they are not latency evidence.
+- **Error boundaries:** 97 Rust tests passed, one legacy fixture-deletion test
   intentionally ignored; 63 Python tests passed with no skips. Review their
   scope in TESTING.md. No real cleanup, updates, process termination, cron save,
   authentication change or restart is performed by these release checks.
@@ -45,6 +49,12 @@ installation or a guarantee about external package repositories/desktop hosts.
   A separate retained pre-rendering-fix repeat also passes (+6.891 MiB,
   0.043305% of one core over 600.388 seconds); neither result proves the latest
   artifact's resource use. Final exact-artifact reconciliation is pending.
+  The retained retention-source build also passes all nine gates (168.16 MiB
+  enabled peak, 0.04330% of one core over 600.407 seconds). The newer first-paint
+  lifecycle and lower collector-thread priority still need their own resource
+  reconciliation. Both the Linux unit contract and read-only inspection of the
+  optimized native preview verify the GUI priority is unchanged while its
+  collector runs at a lower priority.
 - **Appearance/accessibility:** light/dark, high contrast, large text and
   200% scale checks cover all 17 pages (102 captures) and 174 dialog captures.
   All 324 measured dialog footer actions are within their window bounds.

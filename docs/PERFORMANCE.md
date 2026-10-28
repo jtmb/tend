@@ -112,3 +112,57 @@ reuses live process rows, paces new rows, avoids hidden-view rendering and cache
 timezone/log identities with midnight invalidation. Its latest exploratory debug
 run still exceeds 100 ms in some views. Final optimized latency and exact-artifact
 resource gates remain pending; no failed run is overwritten or discarded.
+
+## Retention-source measurement and remaining work
+
+Source checkpoint `2f698ae` keeps cleanup retention controls in native
+disclosures with current-draft summaries. Its retained docs binary SHA-256 is
+`3c8265fffd46d4adf98d16155bf279eef155bfa943c0397e3d0176588be73ca9`.
+The optimized native workflow completes 63 observations, 34 page captures, four
+expanded retention captures, all ten field edit/discard cases and the journal
+selection/pagination/export checks. The wall-time gate still fails: Task Manager
+110.989 ms and System logs 127.686 ms; the other 61 observations are below 100 ms.
+Their main-thread CPU times are 45.357 and 36.923 ms respectively. Host CPU
+pressure is approximately 37–46%. CPU time alone does not identify every wait
+or exempt it from the interaction gate.
+
+Disk cleanup and Daily cleanup first feedback are 73.792 and 68.786 ms, using
+64.014 and 64.558 ms of main-thread CPU. The preceding instrumented build uses
+about 80 ms CPU for those forms. These recorded runs support a smaller initial
+layout cost; they do not prove every interaction meets the target.
+
+The separate whole-app run for this exact retained artifact passes all nine
+gates in `tend-expansion-whole-app-budget-retention.json`:
+
+| Measurement | Reference | Retention candidate |
+| --- | ---: | ---: |
+| Hidden idle peak RSS | 170.71 MiB | 167.17 MiB |
+| Enabled monitoring peak RSS | — | 168.16 MiB |
+| Enabled CPU, one-core share | — | 0.04330% |
+| Enabled interval | — | 600.407 seconds |
+| Major faults during enabled interval | — | 63 |
+
+The enabled peak is 2.55 MiB below the reference in this pair, and 0.99 MiB above
+the candidate's own hidden idle peak. Negative incremental RSS is an observation
+of this run, not a promise that enabling features reduces memory. Default
+monitoring still has optional crash reads off. Both idle intervals record no
+CPU-counter advance or major faults. There are 45 collections, two notices on
+the private test bus, zero subscriptions after disabling and verified collection
+stop; original fixture inputs remain unchanged. No real desktop notification or
+live system action is performed.
+
+Newer source defers automatic full process sampling until Task Manager's first
+paint and cancels that pending start when leaving/hiding. The log-results stack
+also stops measuring its hidden view, and only the collector thread yields at
+lower Linux priority. The optimized artifact SHA-256
+`e3daa2a8c7123bf6bcf81faa95f37a31b3d263934677f32360ce8c592a0a6726`
+passes all expanded native workflows and 97 Rust checks, but its interaction
+repeat still fails: Disk cleanup 111.186 ms and Maintenance 109.361 ms, with all
+other 61 observations below 100 ms. Their main-thread CPU is 71.126/75.719 ms and
+kernel run-queue wait is 33.865/30.395 ms. Waiting contributes to the observed
+delay; it is not subtracted from the gate. Task Manager first feedback is
+78.648 ms. Runtime inspection confirms GUI nice 0 and sampler nice 5.
+
+These newer changes are **not** represented by the resource figures above and
+require their own final resource reconciliation. Updated accessibility/demo and
+delivery remain pending. Unavailable test-only run-queue readings are null.

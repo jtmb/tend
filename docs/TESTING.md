@@ -165,3 +165,12 @@ before editing its fields. Collapsing it never changes saved policy or disables
 an existing rule. Frame observations include main-thread CPU and frame-clock
 phase times; the latency gate still uses the full wall-clock callback-to-paint
 interval, without subtracting waits.
+
+Task Manager's first automatic sample starts after its initial paint. The native
+expansion regression first leaves before paint and proves no subscription or
+collection starts, then returns and requires automatic full population without
+pressing Refresh. The one-shot paint handler is cancelled on leaving, hiding,
+focus loss, speed change or close. Linux collector-thread niceness is lowered by
+five on a best-effort basis; a kernel-backed unit check verifies the requesting
+thread's priority is unchanged. The test-only frame trace records run-queue wait
+as a separate nullable observation, while still enforcing total wall time.

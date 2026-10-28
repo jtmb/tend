@@ -700,3 +700,83 @@ demo reconciliation and final matching production builds/deployment/publication
 remain pending. The protected-file/crontab repeat confirms all fifteen baseline
 fingerprints still match in `tend-expansion-phase7-responsive-invariants.json`.
 No installation or live system action is performed. The goal remains active.
+
+### Retention-source budget passes; first-paint lifecycle work pending
+
+The retained `3c8265ff…` candidate completes its ten-minute reference comparison
+in `tend-expansion-whole-app-budget-retention.json`, all nine gates passing.
+Reference/candidate idle peaks are 170.707/167.172 MiB; monitoring peak is
+168.160 MiB, 0.988 MiB over its own idle peak and 2.547 MiB below this reference.
+This pair's negative incremental RSS is an observation, not guaranteed savings.
+Monitoring uses 0.043304% of one core over 600.407 seconds, with 45 collections,
+63 major faults, two private-bus notices/history events and verified stop at zero
+subscriptions. Both idle intervals show no CPU-counter advance or major faults.
+All six inputs are preserved. Fixtures: reference `tend-workflow-jfixfgkk`,
+candidate `tend-workflow-zuodbj4d`. No compiler or native rendering suite runs
+alongside the measurement, and no real desktop notice is sent.
+
+Source checkpoint `2f698ae` retains that tested cleanup disclosure work. Newer
+uncommitted source schedules Task Manager's automatic subscription after its
+first frame, with an owned, cancellable one-shot frame handler. Leaving/hiding,
+focus loss, speed changes and close cancel the handler before replacing the
+subscription. The initial view says it is collecting; completed data is still
+required by native workflow assertions. The log-results stack measures only
+its visible child. The new native regression checks leaving before first paint
+does not collect, then requires automatic population without forcing Refresh.
+Test-only frame probes include cumulative run-queue wait deltas when available;
+they do not replace or subtract from wall-time feedback.
+
+These newer changes are not included in the completed budget result. Full Rust
+and debug native builds are running next, after the budget command exits zero.
+All installation, final accessibility/demo reconciliation and publication gates
+remain pending. No existing application, job, restart, login or authentication
+policy is changed. The goal stays active.
+
+### First-paint lifecycle and collector priority verified; latency still fails
+
+The first-paint lifecycle passes full Rust checks (96 tests at that point) and
+the native expansion workflow in `tend-workflow-7xj5z0ca`: leaving before paint
+starts no subscription/collection, returning automatically fills all 311 sampled
+rows without forcing Refresh, and selection, grouping, storage, workspaces and
+recording/comparison checks pass. The debug feedback run in
+`tend-workflow-69q4te9w`, recorded in
+`tend-expansion-phase7-after-paint-native-feedback.log`, still misses the latency
+gate (147.981 ms worst).
+
+The collector subsequently lowers only its own Linux thread priority by five,
+best effort. A kernel-backed contract verifies the caller is unchanged. All
+97 Rust tests pass (94 library, three UI/model; one legacy deletion test ignored).
+The optimized docs artifact is `tend-after-paint-0.3.0-docs`, SHA-256
+`e3daa2a8c7123bf6bcf81faa95f37a31b3d263934677f32360ce8c592a0a6726`.
+An independent read-only inspection of the owned native preview records its
+GUI thread at nice 0 and `tend-sampler` at nice 5 in
+`tend-expansion-after-paint-thread-priorities.json`.
+
+The optimized expansion workflow passes in `tend-workflow-mma_jcrh`, with all
+322 sampled processes, automatic after-paint startup, cancellation before paint,
+stable identity/selection, storage/workspace and recording/comparison coverage,
+and Quit during population. All six inputs remain unchanged. The optimized
+release workflow in `tend-workflow-9e4q7mro` completes 63 observations, 34 page
+captures plus four expanded retention captures, keyboard checks, all ten limit
+edit/discard cases and journal mapping/pagination/export checks. It correctly
+exits unsuccessfully: Disk cleanup 111.186 ms and Maintenance 109.361 ms exceed
+100 ms; the other 61 observations pass. Their thread CPU times are 71.126 and
+75.719 ms, with measured run-queue wait of 33.865 and 30.395 ms. These kernel
+observations establish contention contributes, without excluding rendering work
+or waiving the wall-time gate. Task Manager's first feedback is 78.648 ms.
+
+Logs: `tend-expansion-phase7-priority-full-rust.log`,
+`tend-expansion-phase7-after-paint-release-build.log`,
+`tend-expansion-phase7-after-paint-release-native.log` and
+`tend-expansion-phase7-after-paint-optimized-expansion.log`. No compiler or other
+rendering suite runs alongside optimized feedback measurement. The test inspector
+only reads priorities; it does not change them. Every owned preview exits, and
+no test display/compiler remains running afterward.
+
+Next work: reduce the two remaining form costs, reproduce stale folder-rule UI
+saves (direct writers currently use unchecked `save`, although a checked writer
+already exists), then reconcile the exact frozen artifact's resources,
+accessibility and public demo. Matching production builds/deployment and
+publication remain outstanding. The completed retention-source budget remains
+valid only for its retained prior artifact. No installed app/helper, existing
+job, restart, login or authentication policy is changed. The goal remains active.
