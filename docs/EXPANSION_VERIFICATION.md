@@ -28,9 +28,13 @@ installation or a guarantee about external package repositories/desktop hosts.
   1,000-event journal fixture verifies 25-event pages, selection mapping, export
   of all matches and preservation of a later filter's status. Neither external
   query completion nor physical GPU latency is measured by this result. The
-  final low-priority repeat completes functional checks but misses the latency
-  target (worst 2266.105 ms); normal desktop-priority comparison remains pending.
-- **Error boundaries:** 93 Rust tests passed, one legacy fixture-deletion test
+  later low-priority repeat completes functional checks but misses the latency
+  target (worst 2266.105 ms); its normal desktop-priority repeat also fails
+  (1957.126 ms). Latest process-row/hidden-view/date-cache fixes require optimized
+  verification using the corrected callback-to-paint harness. Native expansion
+  checks pass stable selection, complete staged population, process links through
+  excluding searches and Quit during population; they are not latency evidence.
+- **Error boundaries:** 96 Rust tests passed, one legacy fixture-deletion test
   intentionally ignored; 63 Python tests passed with no skips. Review their
   scope in TESTING.md. No real cleanup, updates, process termination, cron save,
   authentication change or restart is performed by these release checks.
@@ -38,6 +42,9 @@ installation or a guarantee about external package repositories/desktop hosts.
   measurement pass: +10.95 MiB peak RSS over reference and 0.0467% of one core
   over 600 seconds, with verified collection stop. See [the measurements](PERFORMANCE.md)
   for binary hashes, scope and exclusions.
+  A separate retained pre-rendering-fix repeat also passes (+6.891 MiB,
+  0.043305% of one core over 600.388 seconds); neither result proves the latest
+  artifact's resource use. Final exact-artifact reconciliation is pending.
 - **Appearance/accessibility:** light/dark, high contrast, large text and
   200% scale checks cover all 17 pages (102 captures) and 174 dialog captures.
   All 324 measured dialog footer actions are within their window bounds.

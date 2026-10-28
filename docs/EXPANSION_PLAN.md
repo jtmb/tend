@@ -8,7 +8,11 @@ or restart/login/authentication policy changes during implementation or delivery
 
 The existing tracked goal remains active. This plan covers all twelve features.
 All seven phases now have source implementations, with recorded unit, native
-workflow and isolated contract checks. The whole-app performance gates and page/dialog geometry matrix pass.
+workflow and isolated contract checks. Earlier optimized binaries pass the
+background CPU/RAM budgets, and the page/dialog geometry matrix passes. The
+interaction-latency gate is unresolved: earlier optimized repeats fail, and the
+latest rendering/date-cache fixes still require optimized verification. Those
+earlier resource measurements do not establish the latest binary's result.
 Final artifact reconciliation, integration deployment and publication
 remain outstanding; this is not a completed expansion release. Existing source work must
 meet the same gates as new work. This planning refresh changes documentation
@@ -36,7 +40,40 @@ schedule/trigger restarts. Detailed evidence remains in EXPANSION_CHECKPOINT.md.
 | 4 — Cleanup protection | Typed explained plans; global exclusions in manual/cron/daily paths; skip incompatible bulk operations; preview invalidation; matching helper/worker/adapter capabilities. | Typed plans, paged explanations and a shared editor implemented. Rust, Python, native cleanup/expansion, visual matrix and isolated integration contracts pass. Matching production deployment and final resource/accessibility gates remain pending. |
 | 5 — History | Maintenance phase outcomes/duration/retries/catch-up/net-space observations; incident timeline across crashes, updates, maintenance and recorded pressure; no invented legacy history or causal claims. | Bounded durable phase receipts, private reports and native paginated timeline implemented. Rust/native/sandbox checks pass. The latest settings-transfer checkpoint records the repaired notification dispatch contract and separate private-bus protocol checks. Matching deployment and final resource/accessibility gates remain pending. |
 | 6 — Alerts and panel | Optional15s cheap hidden monitoring; bounded optional crash reads; configurable alert hold/cooldown/snooze/recovery; fresh/paused panel summary and non-destructive shortcuts. | Opt-in shared monitoring, native editor, bounded optional crash reads, alert state machine and live panel implemented. Rust/native/private-bus/panel/visual/contract checks pass. Optimized ten-minute whole-app budgets and page/dialog geometry pass; final settled visual review remains in phase 7. |
-| 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | All twelve features now have source implementation: versioned settings bundles, inactive drafts, ten native review sections, history limits and clock-order fixes pass Rust/native/sandbox checks. An earlier optimized candidate passes 63 callbacks (worst 90.711 ms). The final repeat at nice 10 misses the latency target; normal desktop-priority comparison remains pending. Optimized default-monitoring CPU/RAM and collector-stop gates pass (+10.95 MiB, 0.0467% of one core over 600 seconds). All seventeen pages pass six accessibility variants; 174 dialog captures pass geometry checks. Settled visual review and the working README demo pass. Final artifact reconciliation, deployment and publication remain outstanding. |
+| 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | Settings bundles, ten review sections and inactive drafts have native/contract coverage. Earlier optimized builds pass background resource budgets; later interaction repeats fail even at normal priority. The latest rendering fixes need optimized latency/resource verification. The seventeen-page accessibility matrix, 174 dialog captures, settled visual review and local working README demo pass for their recorded checkpoints. Final artifact reconciliation, matching deployment and publication remain outstanding. |
+
+### Current checkpoint and next execution order
+
+The ledger records implementation evidence, not completion of a release. Source
+checkpoint `df410c4` adds stable process-row reuse, paced population, visible-view
+rendering and log date-cache invalidation at Toronto midnight. Native process
+workflows and targeted identity/date tests pass. Debug interaction feedback still
+exceeds 100 ms in some views; it is not an optimized release result. Earlier
+normal-priority optimized comparisons also miss the target, so desktop priority
+alone did not resolve it.
+
+1. Freeze the current source; run the full Rust checks and build an immutable
+   optimized candidate. Retain its hash and exact test scope.
+2. Repeat real native workflows and callback-to-paint measurements at normal
+   application priority. Fix demonstrated failures, then repeat affected checks.
+   Do not label a process exit or a responsive loading indicator as completion
+   of an asynchronous operation.
+3. Measure the exact candidate's ten-minute background CPU/RAM/collector-stop
+   budgets without compiling alongside it. Preserve failed and passing results.
+4. Reconcile accessibility, matching helper/worker capabilities and all twelve
+   feature checks against the final artifacts. Exercise privileged/destructive
+   contracts only with isolated fixtures, never live cleanup or updates.
+5. Update the evidence, guide and real-workflow README demo; prepare backed-up
+   matching installation artifacts. Deploy only through existing authorization,
+   without password storage, prompts or authorization-policy changes. If access
+   prevents deployment, record it as pending rather than claiming completion.
+6. Publish the tested source/docs and verify the public README animation. The
+   running app adopts a delivered binary at its next ordinary launch; do not
+   close apps, create jobs, schedule or trigger a restart for delivery.
+
+This planning request edits documentation only. The existing unbudgeted goal is
+already active and remains the single tracker; it is not duplicated or marked
+complete. Future implementation follows the phases and release gates below.
 
 ## Phased delivery plan
 

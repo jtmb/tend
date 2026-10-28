@@ -65,6 +65,13 @@ fn click(
 fn page(stack: &gtk::Stack, name: &str) -> Widget {
     stack.child_by_name(name).expect("Demo page exists")
 }
+fn open_cleanup_retention(root: &impl IsA<Widget>) {
+    let expander = descendants(root).into_iter()
+        .find(|w| w.widget_name() == "cleanup-retention")
+        .unwrap().downcast::<gtk::Expander>().unwrap();
+    expander.set_expanded(true);
+    assert!(expander.child().unwrap().is_child_visible());
+}
 fn bottom(stack: &gtk::Stack, name: &str) {
     if let Some(scroll) = descendants(&page(stack, name))
         .into_iter()
@@ -573,6 +580,7 @@ pub fn qa(
     let (app, win, outer, stack) = (app.clone(), win.clone(), outer.clone(), stack.clone());
     stack.set_transition_type(gtk::StackTransitionType::None);
     let root = page(&stack, "cleanup");
+    open_cleanup_retention(&root);
     let spins = descendants(&root)
         .iter()
         .filter_map(|w| w.downcast_ref::<gtk::SpinButton>().cloned())
@@ -675,6 +683,7 @@ pub fn qa(
             }
             13 => {
                 let daily = page(&stack, "daily-cleanup");
+                open_cleanup_retention(&daily);
                 let fields = descendants(&daily)
                     .iter()
                     .filter_map(|w| w.downcast_ref::<gtk::SpinButton>().cloned())
@@ -2272,7 +2281,7 @@ pub fn bundle_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(400));capture_widget(&win,&directory.join(format!("settings-import-{width}.png")));}
         drop(widget);drop(choose);close(dialog);
         // An existing page draft cannot be overwritten by an imported review.
-        let manual=page(&stack,"cleanup");let spins=descendants(&manual).into_iter().filter_map(|w|w.downcast::<gtk::SpinButton>().ok()).collect::<Vec<_>>();spins[0].set_value(75.);button(&care,"Review imported drafts").emit_clicked();let dialog=modal("Import settings");let widget=dialog.clone().upcast::<gtk::Widget>();named(&widget,"bundle-section").downcast::<gtk::DropDown>().unwrap().set_selected(4);button(&widget,"Review selected section").emit_clicked();wait_main_context(Duration::from_millis(300));assert!(text(&widget).contains("existing unsaved changes"));assert_eq!(spins[0].value_as_int(),75);drop(widget);close(dialog);button(&manual,"Discard changes").emit_clicked();
+        let manual=page(&stack,"cleanup");open_cleanup_retention(&manual);let spins=descendants(&manual).into_iter().filter_map(|w|w.downcast::<gtk::SpinButton>().ok()).collect::<Vec<_>>();spins[0].set_value(75.);button(&care,"Review imported drafts").emit_clicked();let dialog=modal("Import settings");let widget=dialog.clone().upcast::<gtk::Widget>();named(&widget,"bundle-section").downcast::<gtk::DropDown>().unwrap().set_selected(4);button(&widget,"Review selected section").emit_clicked();wait_main_context(Duration::from_millis(300));assert!(text(&widget).contains("existing unsaved changes"));assert_eq!(spins[0].value_as_int(),75);drop(widget);close(dialog);button(&manual,"Discard changes").emit_clicked();
         let mut checked=vec![];
         for section in Section::ALL{
             button(&care,"Review imported drafts").emit_clicked();let comparison=modal("Import settings");let widget=comparison.clone().upcast::<gtk::Widget>();let index=Section::ALL.into_iter().position(|s|s==section).unwrap();named(&widget,"bundle-section").downcast::<gtk::DropDown>().unwrap().set_selected(index as u32);button(&widget,"Review selected section").emit_clicked();drop(widget);drop(comparison);let dialog=modal(section.title());let widget=dialog.clone().upcast::<gtk::Widget>();let save=button(&widget,"Save changes");

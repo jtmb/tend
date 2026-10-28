@@ -82,7 +82,6 @@ impl Controls {
         }
         parent.append(&group);
         let limits = adw::PreferencesGroup::builder()
-            .title("Retention and limits")
             .description("Minimum ages use complete days. Disabled categories are skipped.")
             .build();
         let fields = vec![
@@ -140,7 +139,42 @@ impl Controls {
             checks[owner].connect_active_notify(move |c| target.set_sensitive(c.is_active()));
             numbers.push(n);
         }
-        parent.append(&limits);
+        // Five full ActionRows need not be measured and painted every time a
+        // cleanup page opens. Keep the actual editable values one disclosure
+        // away, with the current draft visible in a compact summary.
+        let retention = gtk::Expander::builder()
+            .label("Retention and limits")
+            .child(&limits)
+            .build();
+        retention.set_widget_name("cleanup-retention");
+        editor::guard_expanders(&retention);
+        parent.append(&retention);
+        let summary = crate::label("", "caption");
+        summary.set_widget_name("cleanup-retention-summary");
+        summary.set_tooltip_text(Some("Current draft limits. Expand Retention and limits to edit. Disabled categories remain skipped."));
+        parent.append(&summary);
+        let update_summary: Rc<dyn Fn()> = Rc::new({
+            let values = numbers.iter().map(|n|n.downgrade()).collect::<Vec<_>>();
+            let summary = summary.downgrade();
+            move || {
+                let Some(summary) = summary.upgrade() else { return };
+                let Some(values) = values.iter().map(|n|n.upgrade().map(|n|n.value_as_int())).collect::<Option<Vec<_>>>() else { return };
+                summary.set_text(&format!(
+                    "Build cache: {} days, keep {} GB · Images: {} days · npm logs: {} days · {}: {} days",
+                    values[0], values[2], values[1], values[3],
+                    if daily { "npm verification" } else { "Thumbnails" }, values[4]
+                ));
+            }
+        });
+        for number in &numbers {
+            let update = update_summary.clone();
+            number.connect_value_changed(move |_| update());
+        }
+        update_summary();
+        let summary = summary.downgrade();
+        retention.connect_expanded_notify(move |expander| {
+            if let Some(summary) = summary.upgrade() { summary.set_visible(!expander.is_expanded()); }
+        });
         Self { checks, numbers }
     }
     fn manual(&self) -> w::Cleanup {

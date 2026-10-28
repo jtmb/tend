@@ -156,3 +156,12 @@ Toronto midnight in both daylight and standard time, and invalidate cached rows
 after a date change or reload. Timezone rules are retained per thread; relative
 dates still use the current clock. These changes add no system job or permanent
 collector. The short population timer is scoped to a visible, incomplete model.
+
+The release driver additionally exercises the cleanup retention disclosures on
+both pages: all five category-enabled limits, live draft-summary updates,
+Discard restoration, collapsed focus guards and expanded narrow/wide captures.
+The policy regression and settings-bundle drivers explicitly open the section
+before editing its fields. Collapsing it never changes saved policy or disables
+an existing rule. Frame observations include main-thread CPU and frame-clock
+phase times; the latency gate still uses the full wall-clock callback-to-paint
+interval, without subtracting waits.

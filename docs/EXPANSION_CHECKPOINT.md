@@ -597,3 +597,106 @@ but a few page paints exceed 100 ms. This is not an optimized release gate pass.
 The optimized build/interaction/resource reconciliation must still be repeated
 for this frozen source before installation or publication. Previous passing
 resource results refer to the retained earlier binary, not this new build.
+
+### Optimized responsive-source checkpoint — latency remains unresolved
+
+Full Rust checks now pass 96 tests (93 library, three UI/model); the one legacy
+fixture-deletion test remains intentionally ignored. The optimized docs build
+finishes in 4m18s without warnings. Retained artifact
+`tend-responsive-df410c4-docs` is 4,555,352 bytes, SHA-256
+`6bea4944f4fed12b1dce1f11b529b0f23b49de3ed14283bc814109a62a8d1347`.
+
+The corrected native release driver completes all 63 observations, 34 captures,
+keyboard traversal and journal pagination/selection/export checks in fixture
+`tend-workflow-2prks3rv`. Five observations exceed 100 ms; worst feedback is
+328.005 ms on first Task Manager navigation. First Cleanup schedule is 201.902 ms,
+Diagnostics 122.004 ms, Disk cleanup 111.323 ms and Storage 108.517 ms. The driver
+correctly exits unsuccessfully for the latency gate after preserving all input
+fingerprints. Niceness is zero, no compiler runs alongside it, and CPU pressure
+is approximately 24–29%. This remains a failed gate rather than proof that
+changing application priority resolves it. Current narrow Task Manager and wide
+System logs captures were visually inspected; readable dates and scrolling are
+preserved.
+
+The same artifact passes the full native expansion workflow in
+`tend-workflow-ym9d_z07`, including complete staged process population, retained
+identity/selection, group links through excluding searches, hidden model release,
+metadata comparisons, workspace edits and two recorded diagnostic sessions.
+Quit during pending process population exits the owned preview successfully.
+All six prepared inputs remain unchanged. Logs:
+`tend-expansion-phase7-responsive-full-rust.log`,
+`tend-expansion-phase7-responsive-release-build.log`,
+`tend-expansion-phase7-responsive-release-native.log` and
+`tend-expansion-phase7-responsive-expansion.log` in the local performance record.
+
+The documentation-only native harness now also records main-thread CPU and
+before-paint/layout/paint phase observations, retaining the same wall-time target.
+This is to distinguish rendering work from scheduling waits, not to subtract
+either from the gate. The instrumented optimized test build is pending. No
+installed files, live cleanup, jobs, restarts, applications or authentication
+settings are changed by this checkpoint. The goal remains active.
+
+### Frame diagnosis and cleanup disclosure under verification
+
+The instrumented artifact SHA-256
+`709d9e3c5d6d522195bb59a13a1a386b1c9629f9e8cd24e905a13331d46e0c28`
+completes native workflows and all input preservation in `tend-workflow-lrr1mim_`.
+It still fails the gate: Disk cleanup 111.278 ms and Daily cleanup 101.521 ms,
+with about 80 ms of main-thread CPU each. Task Manager is 91.462 ms in this
+separate run; that variation does not erase the earlier 328.005 ms observation.
+Phase records distinguish before-paint/layout/paint elapsed and thread CPU time,
+without changing the wall-time target. Logs are
+`tend-expansion-phase7-frame-phases-build.log` and
+`tend-expansion-phase7-frame-phases-native.log`.
+
+Both cleanup pages now put the five retention fields in a native disclosure,
+with a visible current-draft summary when collapsed. All settings remain editable;
+enabling a category enables its associated limits. Weak-reference change handlers
+update the summary without collectors, timers or background writes. Discard
+restores values and the summary. The existing expander focus guard also covers
+this section. This aims to reduce initial layout work, not to remove functionality.
+
+The updated debug native workflow passes all ten field edit/discard cases and
+four expanded captures in `tend-workflow-2mall25e`; current collapsed wide and
+expanded narrow cleanup captures were visually inspected. The debug latency
+gate still fails (worst 236.973 ms); no performance improvement is claimed from
+that run. The policy regression also passes Save/Discard/defaults, invalidation,
+independent policies and failure-state checks in `tend-workflow-gaky7c8h`, with
+the disclosure opened before editing. Original cache/journal inputs remain
+preserved. No live policy or cron job is saved.
+
+The optimized retention candidate is building next. Its latency, exact-artifact
+resource and updated accessibility checks remain release gates. Test code is
+excluded from default installed builds. No user app, system schedule, restart,
+login or authentication policy is changed.
+
+### Optimized retention workflow complete; whole-app budget running
+
+Retained optimized docs artifact `tend-retention-0.3.0-docs` has SHA-256
+`3c8265fffd46d4adf98d16155bf279eef155bfa943c0397e3d0176588be73ca9`.
+Its native check in `tend-workflow-4mbgk_iw` completes all 63 observations,
+34 page captures, four expanded retention captures, keyboard traversal, log
+pagination/selection/export checks, ten category-enabled field edits and Discard
+restoration. All six input fingerprints remain unchanged. The driver correctly
+exits unsuccessfully for the unresolved wall-time target: Task Manager first
+feedback is 110.989 ms (45.357 ms main-thread CPU) and System logs is 127.686 ms
+(36.923 ms CPU). The other 61 observations are below 100 ms. Host CPU pressure
+is approximately 37–46%; neither that observation nor the CPU split excuses the
+failed gate or proves a unique cause.
+
+Disk cleanup first feedback is 73.792 ms (64.014 ms CPU), Daily cleanup
+68.786 ms (64.558 ms CPU). The preceding optimized instrumented run records
+approximately 80 ms CPU for these forms. These are recorded per-run results,
+not a claim that every workload or the entire latency gate now passes.
+The earlier failed runs remain retained. Log:
+`tend-expansion-phase7-retention-release-native.log`.
+
+The exact retained candidate is now undergoing the normal-priority whole-app
+reference/ten-minute monitoring run, without a compiler or native rendering
+suite alongside it. Results will be recorded in
+`tend-expansion-whole-app-budget-retention.json`; the active command log is
+`tend-expansion-phase7-retention-budget.log`. Updated accessibility, public
+demo reconciliation and final matching production builds/deployment/publication
+remain pending. The protected-file/crontab repeat confirms all fifteen baseline
+fingerprints still match in `tend-expansion-phase7-responsive-invariants.json`.
+No installation or live system action is performed. The goal remains active.

@@ -86,6 +86,11 @@ Docker’s inventory is not an exact deletion estimate: the daemon decides unuse
 
 **Disk cleanup → Manual & cron** and **Daily cleanup** have independent policies. Use **Save changes**, **Discard changes** or **Restore defaults**; defaults only change the editor until saved. Docker build cache and dangling images have separate ages (7–3650 days); npm logs and thumbnails use 1–3650 days, and Docker's allowance is 1–100 GB. Pip and Trash are whole-cache/whole-Trash actions without an age filter.
 
+Both pages show the current draft ages and allowance in a compact summary.
+Expand **Retention and limits** to edit all five values. A category must be
+enabled before its limit can be edited. Expanding or collapsing the section
+does not change or save the policy; Discard also restores the summary.
+
 Daily cleanup controls APT obsolete downloads, Docker build cache and dangling images, npm log age, and npm verification every 1–30 days. Defaults preserve 14-day Docker retention, a 5 GB allowance, 30-day npm logs and weekly verification. Daily npm cleanup retains top-level `*.log` files as its target. Daily runs do not consume manual custom-folder rules. Ubuntu’s existing temporary-file cleanup, journal limits, log rotation, Snap maintenance and SSD trimming remain in place.
 
 Saving an enabled automatic policy requires confirmation. Changing selections, retention or rules invalidates the manual preview, even while collection is in progress. Malformed saved policies and rules show errors and prevent unattended deletion; they do not silently enable defaults. Existing legacy shared ages migrate without changing eligibility. Saving cleanup settings never changes maintenance timing, warnings, package-update policy or restart settings.

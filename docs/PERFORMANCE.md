@@ -1,8 +1,10 @@
 # Performance verification
 
 An earlier optimized expansion candidate passes the default-monitoring resource
-gates and native interaction test below. The final source is still being
-reconciled; its latest low-priority interaction run did not meet the target. These results describe controlled checks
+gates and native interaction test below. Later optimized repeats miss the
+interaction target at both low and normal application priority. The latest
+rendering/date-cache source changes require a new optimized measurement; they
+are not established as passing by earlier results. These results describe controlled checks
 on the development machine, not every workload or physical GPU configuration.
 
 ## Whole application
@@ -80,16 +82,33 @@ write throughput. The raw result and relocation fingerprints are retained in
 
 ## Final source reconciliation in progress
 
-The final docs candidate is `123ef37eee56c578b687b191de6b41ef1bc8580feb71ea47ecaf2755efbf7a9b`.
+The retained pre-rendering-fix docs candidate is `123ef37eee56c578b687b191de6b41ef1bc8580feb71ea47ecaf2755efbf7a9b`.
 All 63 functional interaction observations and journal checks complete, but its
 latest low-priority run misses the 100 ms target: worst first feedback is
 2266.105 ms on initial Task Manager navigation; some other navigation/filter
 observations also exceed 100 ms. This is a failed latency gate, despite the
 native process exiting successfully. CPU pressure was around 50% while unrelated
 existing apps remained running. The test inherited nice 10; the desktop app
-normally runs at nice 0. A normal-priority comparison is required before attributing
-the difference to a code regression or claiming the final interaction gate.
+normally runs at nice 0. A subsequent normal-priority comparison also misses the
+target: the earlier candidate's worst feedback is 252.237 ms and this candidate's
+is 1957.126 ms, under CPU pressure of approximately 49–65%. Those measurements
+do not isolate code cost from scheduling; neither is a release pass.
 
-The ten-minute resource repeat uses the frozen optimized candidate and reference,
-without compilation or native rendering suites alongside it. Its final result
-is pending. Earlier measurements remain retained and are not overwritten.
+The ten-minute resource repeat for that retained binary completes without
+compilation or native rendering suites alongside it. All nine gates pass:
+reference idle peak 171.242 MiB, candidate idle peak 178.125 MiB, enabled peak
+178.133 MiB (+6.891 MiB over reference), and 0.043305% of one core over
+600.388 seconds. It records 45 collections, zero subscriptions and verified stop.
+There are 18 major faults in the enabled interval and one actual sustained-event
+notification/history record on the private test bus; no real desktop notice is
+sent. The idle intervals record no CPU-counter advance or major faults.
+
+These figures are retained in `tend-expansion-whole-app-budget-final.json` and
+are separate from the earlier +10.95 MiB/0.0467% result above. They are not
+measurements of the latest process-row, hidden-view or date-cache fixes at
+source checkpoint `df410c4`. A corrected native harness excludes widget lookup
+and assertion traversal from the callback-to-paint interval. Current source
+reuses live process rows, paces new rows, avoids hidden-view rendering and caches
+timezone/log identities with midnight invalidation. Its latest exploratory debug
+run still exceeds 100 ms in some views. Final optimized latency and exact-artifact
+resource gates remain pending; no failed run is overwritten or discarded.

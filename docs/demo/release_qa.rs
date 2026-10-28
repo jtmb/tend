@@ -42,6 +42,23 @@ fn wait(duration: Duration) {
     glib::timeout_add_local_once(duration, move || quit.quit());
     loop_.run();
 }
+fn thread_cpu_ns() -> u64 {
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) } != 0 {
+        return 0;
+    }
+    (time.tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(time.tv_nsec as u64)
+}
+type PendingFeedback = Rc<RefCell<Option<(Instant, u64)>>>;
+fn frame_phase(name: &str, pending: &PendingFeedback, phases: &RefCell<Vec<serde_json::Value>>) {
+    if let Some((start, cpu)) = *pending.borrow() {
+        phases.borrow_mut().push(json!({
+            "phase": name,
+            "elapsed_ms": start.elapsed().as_secs_f64() * 1000.,
+            "main_thread_cpu_ms": thread_cpu_ns().saturating_sub(cpu) as f64 / 1_000_000.,
+        }));
+    }
+}
 fn until(test: impl Fn() -> bool) {
     let start = Instant::now();
     while !test() {
@@ -93,13 +110,25 @@ pub fn run(
             ("schedule", "Maintenance"),
             ("activity", "Activity"),
         ];
-        let pending: Rc<RefCell<Option<Instant>>> = Rc::new(RefCell::new(None));
+        let pending: PendingFeedback = Rc::new(RefCell::new(None));
         let latency = Rc::new(RefCell::new(Vec::<f64>::new()));
+        let phases = Rc::new(RefCell::new(Vec::<serde_json::Value>::new()));
+        let feedback_details = Rc::new(RefCell::new(Vec::<serde_json::Value>::new()));
         let clock = win.frame_clock().unwrap();
-        let (p, l) = (pending.clone(), latency.clone());
+        let (p, trace) = (pending.clone(), phases.clone());
+        let before = clock.connect_before_paint(move |_| frame_phase("before_paint", &p, &trace));
+        let (p, trace) = (pending.clone(), phases.clone());
+        let layout = clock.connect_layout(move |_| frame_phase("layout", &p, &trace));
+        let (p, trace) = (pending.clone(), phases.clone());
+        let paint = clock.connect_paint(move |_| frame_phase("paint", &p, &trace));
+        let (p, l, trace, details) = (pending.clone(), latency.clone(), phases.clone(), feedback_details.clone());
         let signal = clock.connect_after_paint(move |_| {
-            if let Some(start) = p.borrow_mut().take() {
+            if let Some((start, cpu)) = p.borrow_mut().take() {
                 l.borrow_mut().push(start.elapsed().as_secs_f64() * 1000.);
+                details.borrow_mut().push(json!({
+                    "main_thread_cpu_ms": thread_cpu_ns().saturating_sub(cpu) as f64 / 1_000_000.,
+                    "phases": trace.borrow_mut().drain(..).collect::<Vec<_>>(),
+                }));
             }
         });
         let mut observations = vec![];
@@ -112,14 +141,15 @@ pub fn run(
                 let lookup=Instant::now();
                 let target=button(&outer,title);
                 let lookup_ms=lookup.elapsed().as_secs_f64()*1000.;
-                *pending.borrow_mut() = Some(Instant::now());
+                phases.borrow_mut().clear();
+                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns()));
                 let callback=Instant::now();
                 target.emit_clicked();
                 let callback_ms=callback.elapsed().as_secs_f64()*1000.;
                 win.queue_draw();
                 until(|| pending.borrow().is_none());
                 assert_eq!(stack.visible_child_name().as_deref(), Some(id));
-                observations.push(json!({"action":"navigation","page":id,"repeat":repeat,"harness_lookup_ms":lookup_ms,"callback_ms":callback_ms,"first_painted_feedback_ms":latency.borrow().last().unwrap()}));
+                observations.push(json!({"action":"navigation","page":id,"repeat":repeat,"harness_lookup_ms":lookup_ms,"callback_ms":callback_ms,"first_painted_feedback_ms":latency.borrow().last().unwrap(),"feedback_details":feedback_details.borrow().last().unwrap()}));
                 wait(Duration::from_millis(80));
             }
         }
@@ -135,12 +165,13 @@ pub fn run(
             .unwrap();
         for repeat in 0..3 {
             for (selection, count) in [(1, 2), (0, 6)] {
-                *pending.borrow_mut() = Some(Instant::now());
+                phases.borrow_mut().clear();
+                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns()));
                 severity.set_selected(selection);
                 win.queue_draw();
                 until(|| pending.borrow().is_none());
                 assert!(text(&logs).contains(&format!("{count} matching events")));
-                observations.push(json!({"action":"severity_filter","repeat":repeat,"matches":count,"first_painted_feedback_ms":latency.borrow().last().unwrap()}));
+                observations.push(json!({"action":"severity_filter","repeat":repeat,"matches":count,"first_painted_feedback_ms":latency.borrow().last().unwrap(),"feedback_details":feedback_details.borrow().last().unwrap()}));
                 wait(Duration::from_millis(80));
             }
         }
@@ -180,12 +211,13 @@ pub fn run(
         );
         for repeat in 0..3 {
             for (selected, count) in [(1, 500), (0, 1000)] {
-                *pending.borrow_mut() = Some(Instant::now());
+                phases.borrow_mut().clear();
+                *pending.borrow_mut() = Some((Instant::now(), thread_cpu_ns()));
                 severity.set_selected(selected);
                 win.queue_draw();
                 until(|| pending.borrow().is_none());
                 assert!(text(&logs).contains(&format!("{count} matching events")));
-                observations.push(json!({"action":"large_journal_filter","repeat":repeat,"matches":count,"first_painted_feedback_ms":latency.borrow().last().unwrap()}));
+                observations.push(json!({"action":"large_journal_filter","repeat":repeat,"matches":count,"first_painted_feedback_ms":latency.borrow().last().unwrap(),"feedback_details":feedback_details.borrow().last().unwrap()}));
                 wait(Duration::from_millis(80));
             }
         }
@@ -246,11 +278,75 @@ pub fn run(
         button(&logs, "Load logs").emit_clicked();
         until(|| text(&logs).contains("6 matching events"));
         clock.disconnect(signal);
+        for id in [before, layout, paint] { clock.disconnect(id); }
         fs::write(
             directory.join("interaction-evidence.json"),
             serde_json::to_vec_pretty(&observations).unwrap(),
         )
         .unwrap();
+        let mut retention_checks = vec![];
+        for id in ["cleanup", "daily-cleanup"] {
+            stack.set_visible_child_name(id);
+            let root = stack.child_by_name(id).unwrap();
+            let expander = descendants(&root).into_iter()
+                .find(|w| w.widget_name() == "cleanup-retention")
+                .unwrap().downcast::<gtk::Expander>().unwrap();
+            let summary = descendants(&root).into_iter()
+                .find(|w| w.widget_name() == "cleanup-retention-summary")
+                .unwrap().downcast::<gtk::Label>().unwrap();
+            assert!(!expander.is_expanded());
+            assert!(!expander.child().unwrap().is_child_visible());
+            assert!(summary.is_visible() && summary.text().contains("Build cache:"));
+            expander.set_expanded(true);
+            assert!(expander.child().unwrap().is_child_visible());
+            assert!(!summary.is_visible());
+            let fields = descendants(&expander.child().unwrap()).into_iter()
+                .filter_map(|w| w.downcast::<gtk::SpinButton>().ok()).collect::<Vec<_>>();
+            assert_eq!(fields.len(), 5);
+            let categories = descendants(&root).into_iter()
+                .filter_map(|w| w.downcast::<gtk::Switch>().ok()).collect::<Vec<_>>();
+            assert_eq!(categories.len(), if id == "daily-cleanup" { 5 } else { 7 });
+            let owners = [1, 2, 1, 3, if id == "daily-cleanup" { 4 } else { 5 }];
+            for (index, field) in fields.iter().enumerate() {
+                let original = field.value_as_int();
+                let before = summary.text();
+                categories[owners[index]].set_active(true);
+                assert!(field.is_sensitive(), "Enabled category still blocks its limit");
+                field.set_value(f64::from(original + 1));
+                assert_ne!(summary.text(), before, "Draft summary missed an edited limit");
+                button(&root, "Discard changes").emit_clicked();
+                assert_eq!(field.value_as_int(), original);
+                assert_eq!(summary.text(), before);
+            }
+            for width in [720, 1100] {
+                win.set_default_size(width, 760);
+                wait(Duration::from_millis(250));
+                if let Some(scroll) = expander.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>() {
+                    if let Some(bounds) = expander.compute_bounds(&scroll) {
+                        let position = scroll.vadjustment();
+                        position.set_value((position.value() + f64::from(bounds.y()) - 24.).max(0.));
+                    }
+                }
+                wait(Duration::from_millis(150));
+                let path = directory.join(format!("{id}-retention-{width}.png"));
+                let paintable = gtk::WidgetPaintable::new(Some(&outer));
+                let shot = gtk::Snapshot::new();
+                let scale = outer.scale_factor() as f32;
+                shot.scale(scale, scale);
+                paintable.snapshot(&shot, outer.width() as f64, outer.height() as f64);
+                win.renderer().unwrap().render_texture(shot.to_node().as_ref().unwrap(), None)
+                    .save_to_png(&path).unwrap();
+                crate::docs_demo::validate_capture(&outer, &stack, path.to_str().unwrap());
+            }
+            expander.set_expanded(false);
+            assert!(summary.is_visible());
+            assert!(!expander.child().unwrap().is_child_visible());
+            assert!(!button(&root, "Save changes").is_sensitive());
+            if let Some(scroll) = expander.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>() {
+                scroll.vadjustment().set_value(0.);
+            }
+            retention_checks.push(json!({"page":id,"all_five_limits_editable":true,"draft_summary_updates":true,"discard_restores_values":true,"collapse_preserves_focus_guard":true,"expanded_captures":2}));
+        }
         let mut captures = vec![];
         for width in [720, 1100] {
             win.set_default_size(width, 760);
@@ -307,7 +403,7 @@ pub fn run(
         }
         let settings = gtk::Settings::default().unwrap();
         let worst = latency.borrow().iter().copied().fold(0., f64::max);
-        let report = json!({"scope":"Real native navigation/filter callbacks to first painted feedback, not completion of animations or external queries; Xvfb/Cairo", "timings":observations,"worst_first_feedback_ms":worst,"interaction_target_ms":100,"interaction_target_met":worst<100.,"captures":captures,"scale":outer.scale_factor(),"text_dpi":settings.property::<i32>("gtk-xft-dpi"),"high_contrast":adw::StyleManager::default().is_high_contrast(),"virtualized_journal_records":1000,"materialized_log_rows":materialized,"filtered_selection_mapping":true,"journal_page_navigation":true,"paged_export_all_matches":true,"export_preserves_later_filter_status":true,"fixture_only":true});
+        let report = json!({"scope":"Real native navigation/filter callbacks to first painted feedback, not completion of animations or external queries; Xvfb/Cairo", "timings":observations,"worst_first_feedback_ms":worst,"interaction_target_ms":100,"interaction_target_met":worst<100.,"captures":captures,"cleanup_retention":retention_checks,"scale":outer.scale_factor(),"text_dpi":settings.property::<i32>("gtk-xft-dpi"),"high_contrast":adw::StyleManager::default().is_high_contrast(),"virtualized_journal_records":1000,"materialized_log_rows":materialized,"filtered_selection_mapping":true,"journal_page_navigation":true,"paged_export_all_matches":true,"export_preserves_later_filter_status":true,"fixture_only":true});
         fs::write(
             directory.join("release-evidence.json"),
             serde_json::to_vec_pretty(&report).unwrap(),
