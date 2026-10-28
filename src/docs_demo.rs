@@ -2097,6 +2097,21 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         let process=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();
         assert!(wait_for_task_rows(&process.model().unwrap(),Duration::from_secs(15)));
         let tabs=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::Stack>().ok()).find(|s|s.child_by_name("apps").is_some()).unwrap();
+        assert!(wait_until(||!text(&task).contains("Loading process rows…"),Duration::from_secs(15)));
+        let expected=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::Label>().ok()).map(|l|l.text().to_string()).find(|t|t.starts_with("CPU ")&&t.contains("Memory")&&t.ends_with(" processes")).unwrap();
+        let total=expected.split_whitespace().rev().nth(1).unwrap().parse::<u32>().unwrap();
+        assert_eq!(process.model().unwrap().n_items(),total,"Staged population omitted sampled processes");
+        let model=process.model().unwrap();
+        let own=(0..model.n_items()).find_map(|i|{let object=model.item(i).unwrap().downcast::<glib::BoxedAnyObject>().unwrap();let own=object.borrow::<tend::task_stats::Task>().pid==std::process::id();own.then_some((i,object))}).unwrap();
+        model.select_item(own.0,true);
+        let before=crate::monitor::budget_stats()["collections"].as_u64().unwrap();refresh(&stack);
+        assert!(wait_until(||crate::monitor::budget_stats()["collections"].as_u64().unwrap()>before,Duration::from_secs(15)));wait_main_context(Duration::from_millis(150));
+        assert!(wait_until(||!text(&task).contains("Loading process rows…"),Duration::from_secs(15)));
+        let current=(0..model.n_items()).find_map(|i|{let object=model.item(i).unwrap().downcast::<glib::BoxedAnyObject>().unwrap();let own=object.borrow::<tend::task_stats::Task>().pid==std::process::id();own.then_some(object)}).unwrap();
+        assert_eq!(own.1,current,"A live refresh replaced a surviving process row");
+        assert_eq!(model.clone().downcast::<gtk::SingleSelection>().unwrap().selected_item().unwrap(),current.upcast::<glib::Object>(),"Live refresh lost the selected process");
+        evidence.push(json!({"complete_staged_process_population":total,"stable_live_row_objects_and_selection":true}));
+        let process_search=descendants(&tabs.child_by_name("processes").unwrap()).into_iter().find_map(|w|w.downcast::<gtk::SearchEntry>().ok()).unwrap();
         for name in ["apps","process-tree"] {
             tabs.set_visible_child_name(name);wait_main_context(Duration::from_millis(150));
             let root=tabs.child_by_name(name).unwrap();
@@ -2116,7 +2131,13 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
             for i in 0..model.n_items().min(500) {
                 let row=model.row(i).unwrap();row.set_expanded(true);selection.set_selected(i);
                 let button=button(&root,"Show selected process");
-                if button.is_sensitive() {button.emit_clicked();assert_eq!(tabs.visible_child_name().as_deref(),Some("processes"));linked=true;break}
+                if button.is_sensitive() {
+                    process_search.set_text("tend-no-match-before-process-link");wait_main_context(Duration::from_millis(300));
+                    button.emit_clicked();assert_eq!(tabs.visible_child_name().as_deref(),Some("processes"));
+                    assert!(process_search.text().is_empty(),"Process link retained an excluding search");
+                    assert!(process.model().unwrap().clone().downcast::<gtk::SingleSelection>().unwrap().selected_item().is_some(),"Process link did not select its identity during staged loading");
+                    linked=true;break
+                }
             }
             assert!(linked,"No process details link in {name}");
             evidence.push(json!({"view":name,"rows":original,"expanded":expanded,"search":true,"user_filter":true,"process_link":true}));
@@ -2131,7 +2152,7 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
             assert_eq!(table.model().unwrap().n_items(),0,"Hidden group model was retained while charting");
         }
         tabs.set_visible_child_name("processes");
-        assert!(process.model().unwrap().n_items()>0,"Switching back did not populate cached process data");
+        assert!(wait_for_task_rows(&process.model().unwrap(),Duration::from_secs(5)),"Switching back did not stage cached process data");
         evidence.push(json!({"performance_skips_hidden_process_models":true,"return_to_processes_uses_latest_snapshot":true}));
         stack.set_visible_child_name("diagnostics");let diag=page(&stack,"diagnostics");
         assert!(!button(&diag,"Finish recording").is_sensitive());assert!(!button(&diag,"Save recording").is_sensitive());
@@ -2156,6 +2177,9 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
             win.set_default_size(width,760);wait_main_context(Duration::from_millis(250));
             capture_widget(&outer,&directory.join(format!("diagnostics-{width}.png")));
         }
+        stack.set_visible_child_name("task-manager");refresh(&stack);
+        assert!(wait_for_task_rows(&process.model().unwrap(),Duration::from_secs(15)));
+        evidence.push(json!({"quit_during_process_population":text(&task).contains("Loading process rows…")}));
         fs::write(directory.join("expansion-evidence.json"),serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
         app.activate_action("quit",None);
     });

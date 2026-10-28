@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::os::unix::process::CommandExt;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fs,
     io::Read,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
@@ -318,7 +317,7 @@ fn decode_containers(output: &str, settings: &Settings) -> Result<Vec<Container>
 pub fn containers(settings: &Settings) -> Result<Vec<Container>, String> {
     #[cfg(feature = "docs-demo")]
     if std::env::var_os("TEND_DEMO_DIR").is_some() {
-        let file = fs::File::open(w::home().join("demo-workspaces-docker.jsonl"))
+        let file = std::fs::File::open(w::home().join("demo-workspaces-docker.jsonl"))
             .map_err(|_| "The isolated Docker label fixture is unavailable.".to_string())?;
         let mut text = String::new();
         file.take(2 * 1024 * 1024 + 1)

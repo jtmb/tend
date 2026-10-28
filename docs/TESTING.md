@@ -141,3 +141,18 @@ spring/opacity frames under Xvfb. Adjacent JSON records this setting along with
 scale, text DPI, theme, contrast and footer geometry. The capture driver owns a
 separate process group and terminates that group on failure/timeout so a failed
 preview cannot remain consuming CPU. It never signals installed applications.
+
+
+Live process rows now retain GObject identity by PID/start time. New identities
+populate in 25-row batches paced 32 ms apart; population is cancelled on hiding
+or leaving the view. Native expansion checks verify complete sampled coverage,
+selection/object reuse across refresh, process links through a prior excluding
+search, no hidden process population while charting, and Quit during population.
+Unit contracts cover PID reuse. Only the selected process/group/resource view
+builds its widgets; captured counter histories remain shared and bounded.
+
+Log index objects are reused within a query and calendar day. Date checks cover
+Toronto midnight in both daylight and standard time, and invalidate cached rows
+after a date change or reload. Timezone rules are retained per thread; relative
+dates still use the current clock. These changes add no system job or permanent
+collector. The short population timer is scoped to a visible, incomplete model.

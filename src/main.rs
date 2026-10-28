@@ -343,7 +343,7 @@ fn build(app: &adw::Application) {
     layout.set_sidebar_width_fraction(0.23);
     toast.set_child(Some(&layout));
     let stack = gtk::Stack::builder()
-        .transition_type(gtk::StackTransitionType::Crossfade)
+        .transition_type(gtk::StackTransitionType::None)
         .hhomogeneous(false)
         .vhomogeneous(false)
         .hexpand(true)

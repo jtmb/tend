@@ -3,6 +3,15 @@ use adw::prelude::*;
 use gtk::{gio, glib, Orientation};
 use std::{cell::{Cell, RefCell}, rc::Rc, sync::Arc};
 use tend::{system_logs as logs, workstation as w};
+type DayKey = Option<(i32,i32,i32)>;
+fn refresh_index_objects(objects:&RefCell<Vec<glib::BoxedAnyObject>>,day:&Cell<DayKey>,count:usize,current:DayKey) {
+    // Reuse stable rows during the day, but rebind them after local midnight
+    // so relative dates cannot remain stuck at Today/Yesterday across filters.
+    if objects.borrow().len()!=count||day.get()!=current {
+        *objects.borrow_mut()=(0..count).map(glib::BoxedAnyObject::new).collect();
+        day.set(current);
+    }
+}
 pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let p=page("System logs","Read recent events and crashed applications. Filter the results, then select an event for details. Logs are loaded only on request.");
     let controls = crate::workbench::buttons(&p);
@@ -46,6 +55,8 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let entries=Rc::new(RefCell::new(Vec::<Arc<logs::Entry>>::new()));
     let shown=Rc::new(RefCell::new(Vec::<usize>::new()));
     let store=gio::ListStore::new::<glib::BoxedAnyObject>();
+    let index_objects=Rc::new(RefCell::new(Vec::<glib::BoxedAnyObject>::new()));
+    let index_day=Rc::new(Cell::new(None));
     let selection=gtk::SingleSelection::new(Some(store.clone()));selection.set_autoselect(false);selection.set_can_unselect(true);
     let factory=gtk::SignalListItemFactory::new();
     factory.connect_setup(|_,item|{
@@ -122,7 +133,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     p.append(&detail_scroll);
     let render: Rc<dyn Fn()> = Rc::new({
         let(page_index,previous,next,range,busy)=(page_index.clone(),previous.downgrade(),next.downgrade(),range.clone(),export_busy.clone());
-        let store=store.clone();let selection=selection.clone();
+        let store=store.clone();let selection=selection.clone();let index_objects=index_objects.clone();let index_day=index_day.clone();
         let results = results.clone();
         let empty_title = empty_title.clone();
         let empty_description = empty_description.clone();
@@ -135,6 +146,8 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         let detail = detail.buffer();
         move || {
             let(Some(search),Some(priority),Some(export),Some(previous),Some(next))=(search.upgrade(),priority.upgrade(),export.upgrade(),previous.upgrade(),next.upgrade())else{return;};
+            let day=i64::try_from(w::now()).ok().and_then(tend::presentation::day_key);
+            refresh_index_objects(&index_objects,&index_day,entries.borrow().len(),day);
             let query = search.text().to_lowercase();
             let max = match priority.selected() {
                 1 => 3,
@@ -157,7 +170,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             detail.set_text("Select an event to see its details.");
             selection.set_selected(gtk::INVALID_LIST_POSITION);
             let page=page_index.get().min(filtered.len().saturating_sub(1)/25);page_index.set(page);let start=page*25;let end=(start+25).min(filtered.len());
-            let visible=filtered[start..end].iter().map(|index|glib::BoxedAnyObject::new(*index)).collect::<Vec<_>>();
+            let visible=filtered[start..end].iter().map(|index|index_objects.borrow()[*index].clone()).collect::<Vec<_>>();
             store.splice(0,store.n_items(),&visible);
             previous.set_sensitive(page>0);next.set_sensitive(end<filtered.len());
             range.set_text(&if filtered.is_empty(){"No matching events".into()}else{format!("{}–{} of {}",start+1,end,filtered.len())});
@@ -183,12 +196,14 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     // Source/time controls describe the next query. Do not leave a report from
     // the previous query under those controls or allow it to be exported.
     let invalidate: Rc<dyn Fn()> = Rc::new({
+        let index_objects=index_objects.clone();
         let (entries, filter, title, description, status, notice) = (
             entries.clone(), filter.clone(), empty_title.clone(),
             empty_description.clone(), status.clone(), notice.clone(),
         );
         move || {
             entries.borrow_mut().clear();
+            index_objects.borrow_mut().clear();
             filter();
             notice.root.set_visible(false);
             title.set_text("Choose logs to inspect");
@@ -222,6 +237,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             loading_description.clone(),
         );
         data.borrow_mut().clear();
+        index_objects.borrow_mut().clear();
         f();
         for control in &query_controls {
             control.set_sensitive(false);
@@ -284,4 +300,19 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     });
     let _ = win;
     stack.add_titled(&scroll(&p), Some("system-logs"), "System logs");
+}
+
+#[cfg(test)]
+mod date_cache_contracts {
+    use super::*;
+    #[test]
+    fn relative_row_dates_rebind_after_midnight_and_after_reload() {
+        let objects=RefCell::new(vec![]);let day=Cell::new(None);
+        let today=Some((2026,10,28));let tomorrow=Some((2026,10,29));
+        refresh_index_objects(&objects,&day,1,today);let first=objects.borrow()[0].clone();
+        refresh_index_objects(&objects,&day,1,today);assert_eq!(objects.borrow()[0],first);
+        refresh_index_objects(&objects,&day,1,tomorrow);let changed=objects.borrow()[0].clone();assert_ne!(changed,first);
+        objects.borrow_mut().clear();refresh_index_objects(&objects,&day,1,tomorrow);
+        assert_ne!(objects.borrow()[0],changed,"A new query reused an old event identity");
+    }
 }

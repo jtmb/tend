@@ -1,7 +1,12 @@
 //! Consistent, human-readable dates for the desktop interface.
 use gtk::glib::{DateTime, TimeZone};
+thread_local! {
+    // Retain the immutable timezone rules instead of reopening/parsing the
+    // zoneinfo file for every visible log row. Relative days still use now().
+    static TORONTO: TimeZone = TimeZone::new(Some("America/Toronto"));
+}
 fn zone() -> TimeZone {
-    TimeZone::new(Some("America/Toronto"))
+    TORONTO.with(Clone::clone)
 }
 fn local(ts: i64) -> Option<DateTime> {
     DateTime::from_unix_utc(ts).ok()?.to_timezone(&zone()).ok()
@@ -29,6 +34,9 @@ fn day(d: &DateTime) -> String {
     }
     format(d, "%b %-d, %Y")
 }
+pub fn day_key(ts: i64) -> Option<(i32, i32, i32)> {
+    local(ts).map(|d| (d.year(), d.month(), d.day_of_month()))
+}
 pub fn when(ts: i64) -> String {
     local(ts)
         .map(|d| format!("{} · {}", day(&d), clock(&d)))
@@ -50,9 +58,18 @@ pub fn date(raw: &str) -> String {
     if raw.is_empty() {
         return "No report yet".into();
     }
-    let segments:Vec<_>=raw.split('-').collect();
-    if segments.len()!=3||segments[0].len()!=4||segments[1].len()!=2||segments[2].len()!=2||segments.iter().any(|s|!s.bytes().all(|b|b.is_ascii_digit())) {return "Unavailable".into();}
-    let parts:Vec<i32>=segments.iter().map(|s|s.parse().unwrap()).collect();
+    let segments: Vec<_> = raw.split('-').collect();
+    if segments.len() != 3
+        || segments[0].len() != 4
+        || segments[1].len() != 2
+        || segments[2].len() != 2
+        || segments
+            .iter()
+            .any(|s| !s.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return "Unavailable".into();
+    }
+    let parts: Vec<i32> = segments.iter().map(|s| s.parse().unwrap()).collect();
     DateTime::new(&zone(), parts[0], parts[1], parts[2], 12, 0, 0.)
         .map(|d| day(&d))
         .unwrap_or_else(|_| "Unavailable".into())
@@ -108,12 +125,38 @@ mod tests {
         }
     }
     #[test]
+    fn row_dates_invalidate_at_toronto_midnight_in_both_seasons() {
+        for (before, after, old, new) in [
+            (
+                "2026-10-28T03:59:59Z",
+                "2026-10-28T04:00:00Z",
+                (2026, 10, 27),
+                (2026, 10, 28),
+            ),
+            (
+                "2026-01-15T04:59:59Z",
+                "2026-01-15T05:00:00Z",
+                (2026, 1, 14),
+                (2026, 1, 15),
+            ),
+        ] {
+            assert_eq!(
+                day_key(DateTime::from_iso8601(before, None).unwrap().to_unix()),
+                Some(old)
+            );
+            assert_eq!(
+                day_key(DateTime::from_iso8601(after, None).unwrap().to_unix()),
+                Some(new)
+            );
+        }
+    }
+    #[test]
     fn invalid_systemd_timestamps_do_not_display_bad_dates() {
         for raw in ["n/a", "@NaN", "@inf", "@-1", ""] {
             assert_eq!(systemd(raw), None);
         }
         assert_eq!(date("bad"), "Unavailable");
         assert_eq!(date(""), "No report yet");
-        assert_eq!(date("2026-x-10-26"),"Unavailable");
+        assert_eq!(date("2026-x-10-26"), "Unavailable");
     }
 }

@@ -11,7 +11,6 @@ use std::{
 };
 use tend::{
     settings_bundle::{Appearance, Bundle, Exclusions, Maintenance, Section},
-    workstation as w,
 };
 type Refresh = Rc<dyn Fn(&Value)>;
 struct View {
@@ -732,7 +731,7 @@ pub fn qa_pick(path: std::path::PathBuf) {
     assert!(
         std::env::var_os("TEND_BUNDLE_QA").is_some() && std::env::var_os("TEND_DEMO_DIR").is_some()
     );
-    let home = w::home();
+    let home = tend::workstation::home();
     assert!(
         path.starts_with(home.parent().unwrap())
             && !path

@@ -3,7 +3,7 @@ use adw::prelude::*;
 use gtk::{gio, glib, Orientation};
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -55,6 +55,216 @@ fn cell(column: usize, t: &Task) -> String {
         _ => t.status.clone(),
     }
 }
+const COUNTER_NOTE: &str = "CPU: share of total capacity. Memory: RSS, including shared pages. Disk I/O: physical bytes. — means unavailable or collecting.";
+fn row_id(object: &glib::BoxedAnyObject) -> (u32, u64) {
+    let value = object.borrow::<Task>();
+    (value.pid, value.start)
+}
+fn selected_id(selection: &gtk::SingleSelection) -> Option<(u32, u64)> {
+    selection.selected_item().map(|object| {
+        let t = task(&object);
+        (t.pid, t.start)
+    })
+}
+fn restore_selection(
+    selection: &gtk::SingleSelection,
+    sorted: &gtk::SortListModel,
+    id: Option<(u32, u64)>,
+) {
+    if selected_id(selection) == id {
+        return;
+    }
+    if let Some(id) = id {
+        for i in 0..sorted.n_items() {
+            let object = sorted.item(i).unwrap();
+            let value = task(&object);
+            if (value.pid, value.start) == id {
+                selection.set_selected(i);
+                return;
+            }
+        }
+    }
+    selection.set_selected(gtk::INVALID_LIST_POSITION);
+}
+// Keep the same GObjects for surviving identities; a reused PID is a new row.
+// New rows are returned for bounded, idle-time insertion into the actual model.
+fn reconcile_tasks(store: &gio::ListStore, tasks: &[Task]) -> Vec<glib::BoxedAnyObject> {
+    let wanted = tasks
+        .iter()
+        .map(|t| ((t.pid, t.start), t))
+        .collect::<BTreeMap<_, _>>();
+    let mut existing = HashSet::new();
+    for i in (0..store.n_items()).rev() {
+        let object = store
+            .item(i)
+            .unwrap()
+            .downcast::<glib::BoxedAnyObject>()
+            .unwrap();
+        let id = row_id(&object);
+        if let Some(value) = wanted.get(&id) {
+            *object.borrow_mut::<Task>() = (*value).clone();
+            existing.insert(id);
+        } else {
+            store.remove(i);
+        }
+    }
+    tasks
+        .iter()
+        .filter(|t| !existing.contains(&(t.pid, t.start)))
+        .cloned()
+        .map(glib::BoxedAnyObject::new)
+        .collect()
+}
+fn render_cell(label: &gtk::Label, column: usize, value: &Task) {
+    let text = cell(column, value);
+    if label.text().as_str() != text {
+        label.set_text(&text);
+    }
+    let tip = format!(
+        "{} · PID {} · {}\n{}",
+        value.name, value.pid, value.user, value.executable
+    );
+    if label.tooltip_text().as_deref() != Some(tip.as_str()) {
+        label.set_tooltip_text(Some(&tip));
+    }
+}
+struct BoundCell {
+    label: glib::WeakRef<gtk::Label>,
+    object: glib::WeakRef<glib::BoxedAnyObject>,
+    column: usize,
+}
+struct ProcessRows {
+    store: gio::ListStore,
+    cells: Rc<RefCell<BTreeMap<usize, BoundCell>>>,
+    pending: Rc<RefCell<Option<glib::SourceId>>>,
+    serial: Rc<Cell<u64>>,
+    present: Rc<RefCell<HashSet<(u32, u64)>>>,
+}
+impl ProcessRows {
+    fn new(store: &gio::ListStore) -> Rc<Self> {
+        Rc::new(Self {
+            store: store.clone(),
+            cells: Default::default(),
+            pending: Default::default(),
+            serial: Default::default(),
+            present: Default::default(),
+        })
+    }
+    fn cancel(&self) {
+        self.serial.set(self.serial.get().wrapping_add(1));
+        if let Some(source) = self.pending.borrow_mut().take() {
+            source.remove();
+        }
+    }
+    fn clear(&self) {
+        self.cancel();
+        self.store.remove_all();
+        self.present.borrow_mut().clear();
+        self.cells.borrow_mut().clear();
+    }
+    fn ensure(&self, value: &Task) {
+        let inserted = self.present.borrow_mut().insert((value.pid, value.start));
+        if inserted {
+            self.store.append(&glib::BoxedAnyObject::new(value.clone()));
+        }
+    }
+    fn refresh_cells(&self) {
+        // No strong widget/item references survive a refresh. A recycled GTK
+        // cell replaces its registry entry, so scrolling cannot grow this map.
+        let mut current = vec![];
+        self.cells.borrow_mut().retain(|_, cell| {
+            if let (Some(label), Some(object)) = (cell.label.upgrade(), cell.object.upgrade()) {
+                current.push((label, object, cell.column));
+                true
+            } else {
+                false
+            }
+        });
+        for (label, object, column) in current {
+            render_cell(&label, column, &object.borrow::<Task>());
+        }
+    }
+    fn update(
+        &self,
+        tasks: &[Task],
+        filter: &gtk::CustomFilter,
+        sorted: &gtk::SortListModel,
+        selection: &gtk::SingleSelection,
+        status: &gtk::Label,
+    ) {
+        self.cancel();
+        let serial = self.serial.get();
+        let selected = selected_id(selection);
+        let born = reconcile_tasks(&self.store, tasks);
+        *self.present.borrow_mut() = (0..self.store.n_items())
+            .map(|i| row_id(&self.store.item(i).unwrap().downcast().unwrap()))
+            .collect();
+        filter.changed(gtk::FilterChange::Different);
+        if let Some(sorter) = sorted.sorter() {
+            sorter.changed(gtk::SorterChange::Different);
+        }
+        self.refresh_cells();
+        restore_selection(selection, sorted, selected);
+        if born.is_empty() {
+            status.set_text(COUNTER_NOTE);
+            return;
+        }
+        let (store, present, pending, epoch) = (
+            self.store.clone(),
+            self.present.clone(),
+            self.pending.clone(),
+            self.serial.clone(),
+        );
+        let (sorted, selection, status) = (sorted.clone(), selection.clone(), status.clone());
+        let total = tasks.len();
+        let mut born = VecDeque::from(born);
+        status.set_text(&format!(
+            "Loading process rows… {} of {total}. Filters apply to rows received so far.",
+            store.n_items()
+        ));
+        // An always-ready idle can fill the whole table before the next paint.
+        // Pace batches across frames; this timer exists only during population.
+        let source = glib::timeout_add_local_full(
+            Duration::from_millis(32),
+            glib::Priority::LOW,
+            move || {
+                if epoch.get() != serial {
+                    return glib::ControlFlow::Break;
+                }
+                let selected = selected_id(&selection);
+                let mut batch = vec![];
+                for _ in 0..25 {
+                    let Some(object) = born.pop_front() else {
+                        break;
+                    };
+                    if present.borrow_mut().insert(row_id(&object)) {
+                        batch.push(object);
+                    }
+                }
+                if !batch.is_empty() {
+                    store.splice(store.n_items(), 0, &batch);
+                }
+                restore_selection(&selection, &sorted, selected);
+                if epoch.get() != serial {
+                    return glib::ControlFlow::Break;
+                }
+                if born.is_empty() {
+                    pending.borrow_mut().take();
+                    status.set_text(COUNTER_NOTE);
+                    glib::ControlFlow::Break
+                } else {
+                    status.set_text(&format!(
+                    "Loading process rows… {} of {total}. Filters apply to rows received so far.",
+                    store.n_items()
+                ));
+                    glib::ControlFlow::Continue
+                }
+            },
+        );
+        *self.pending.borrow_mut() = Some(source);
+    }
+}
+
 fn compare(column: usize, a: &Task, b: &Task) -> std::cmp::Ordering {
     match column {
         0 => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
@@ -178,7 +388,8 @@ fn ingest(state: &mut State, s: Arc<Snapshot>) {
 struct Ui {
     tabs: glib::WeakRef<gtk::Stack>,
     groups: Rc<crate::process_tree_ui::Views>,
-    store: gio::ListStore,
+    rows: Rc<ProcessRows>,
+    filter: gtk::CustomFilter,
     selection: gtk::SingleSelection,
     sorted: gtk::SortListModel,
     summary: gtk::Label,
@@ -200,7 +411,7 @@ struct Ui {
 impl Ui {
     fn pause(&self) {
         self.groups.clear();
-        self.store.remove_all();
+        self.rows.clear();
         self.export.set_sensitive(false);
         self.quit.set_sensitive(false);
         self.end.set_sensitive(false);
@@ -211,33 +422,27 @@ impl Ui {
     fn update(&self, state: &State) {
         self.export.set_sensitive(state.previous.is_some());
         let Some(s) = &state.previous else { return };
-        let active = self.tabs.upgrade().and_then(|tabs| tabs.visible_child_name());
+        let active = self
+            .tabs
+            .upgrade()
+            .and_then(|tabs| tabs.visible_child_name());
         if matches!(active.as_deref(), Some("apps" | "process-tree")) {
             self.groups.update(s.clone());
         }
         // A hidden ColumnView still binds rows after a model splice. Avoid
         // rebuilding process widgets while only the live charts are visible.
         if active.as_deref() == Some("processes") {
-            let selected = self.selection.selected_item().map(|v| {
-                let t = task(&v);
-                (t.pid, t.start)
-            });
-            let values: Vec<_> = s
-                .tasks
-                .iter()
-                .cloned()
-                .map(glib::BoxedAnyObject::new)
-                .collect();
-            self.store.splice(0, self.store.n_items(), &values);
-            if let Some(id) = selected {
-                if let Some(i) = (0..self.sorted.n_items()).find(|i| {
-                    let o = self.sorted.item(*i).unwrap();
-                    let t = task(&o);
-                    (t.pid, t.start) == id
-                }) {
-                    self.selection.set_selected(i);
-                }
-            }
+            self.rows.update(
+                &s.tasks,
+                &self.filter,
+                &self.sorted,
+                &self.selection,
+                &self.status,
+            );
+            self.selection_details(&self.selection);
+        } else {
+            self.rows.cancel();
+            self.status.set_text(COUNTER_NOTE);
         }
         self.summary.set_text(&format!(
             "CPU {}    Memory {:.0}%    {} processes",
@@ -251,7 +456,12 @@ impl Ui {
                 / s.system.memory_total.max(1) as f64,
             s.tasks.len()
         ));
-        self.status.set_text("CPU: share of total capacity. Memory: RSS, including shared pages. Disk I/O: physical bytes. — means unavailable or collecting.");
+        // Histories are collected for every resource, but the native resource
+        // cards and chart belong to the Performance tab. Do not build or
+        // measure those hidden widgets during process-list navigation.
+        if active.as_deref() != Some("performance") {
+            return;
+        }
         let mut keys: Vec<_> = state.traces.keys().cloned().collect();
         keys.sort_by_key(|s| {
             let rank = if s == "cpu" {
@@ -303,6 +513,21 @@ impl Ui {
         self.diagnostics.set_text(&state.diagnostics);
         self.paint(state);
     }
+    fn selection_details(&self, selection: &gtk::SingleSelection) {
+        if let Some(object) = selection.selected_item() {
+            let t = task(&object);
+            let own = t.uid == unsafe { libc::geteuid() } && t.pid != std::process::id();
+            self.quit.set_sensitive(own);
+            self.end.set_sensitive(own);
+            self.info.set_text(&format!(
+                "{} · PID {} · {} · {}\n{}",
+                t.name, t.pid, t.user, t.status, t.executable
+            ));
+        } else {
+            self.quit.set_sensitive(false);
+            self.end.set_sensitive(false);
+        }
+    }
     fn paint(&self, state: &State) {
         let key = self.selected.borrow();
         let Some(trace) = state.traces.get(key.as_str()) else {
@@ -342,7 +567,12 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     root.set_margin_start(24);
     root.set_margin_end(24);
     root.append(&label("Task Manager", "page-title"));
-    let tabs = gtk::Stack::builder().vexpand(true).hexpand(true).build();
+    let tabs = gtk::Stack::builder()
+        .vexpand(true)
+        .hexpand(true)
+        .hhomogeneous(false)
+        .vhomogeneous(false)
+        .build();
     let switcher = gtk::StackSwitcher::builder()
         .stack(&tabs)
         .halign(gtk::Align::Start)
@@ -368,6 +598,8 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     actions.insert(&end, -1);
     process.append(&toolbar);
     let store = gio::ListStore::new::<glib::BoxedAnyObject>();
+    let rows = ProcessRows::new(&store);
+    let state = Rc::new(RefCell::new(State::default()));
     let query = Rc::new(RefCell::new(String::new()));
     let mine = Rc::new(Cell::new(false));
     let q = query.clone();
@@ -411,16 +643,24 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             }
             item.set_child(Some(&text));
         });
+        let cells = rows.cells.clone();
         factory.connect_bind(move |_, o| {
             let item = o.downcast_ref::<gtk::ListItem>().unwrap();
-            let value = item.item().unwrap();
-            let t = task(&value);
+            let object = item
+                .item()
+                .unwrap()
+                .downcast::<glib::BoxedAnyObject>()
+                .unwrap();
             let text = item.child().unwrap().downcast::<gtk::Label>().unwrap();
-            text.set_text(&cell(i, &t));
-            text.set_tooltip_text(Some(&format!(
-                "{} · PID {} · {}\n{}",
-                t.name, t.pid, t.user, t.executable
-            )));
+            render_cell(&text, i, &object.borrow::<Task>());
+            cells.borrow_mut().insert(
+                text.as_ptr() as usize,
+                BoundCell {
+                    label: text.downgrade(),
+                    object: object.downgrade(),
+                    column: i,
+                },
+            );
         });
         let col = gtk::ColumnViewColumn::new(Some(title), Some(factory));
         col.set_resizable(true);
@@ -463,19 +703,42 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let only = gtk::CheckButton::with_label("Only my processes");
     process.append(&only);
     let f = filter.clone();
+    let search_query = query.clone();
     search.connect_search_changed(move |s| {
-        *query.borrow_mut() = s.text().to_lowercase();
+        *search_query.borrow_mut() = s.text().to_lowercase();
         f.changed(gtk::FilterChange::Different);
     });
+    let own_filter = filter.clone();
     only.connect_toggled(move |b| {
         mine.set(b.is_active());
-        filter.changed(gtk::FilterChange::Different);
+        own_filter.changed(gtk::FilterChange::Different);
     });
     tabs.add_titled(&process, Some("processes"), "Processes");
     let (target, process_selection, process_sorted) =
         (tabs.clone(), selection.clone(), sorted.clone());
+    let (link_rows, link_state, link_search, link_only, link_filter, link_query) = (
+        rows.clone(),
+        state.clone(),
+        search.clone(),
+        only.clone(),
+        filter.clone(),
+        query.clone(),
+    );
     let groups = crate::process_tree_ui::Views::new(&tabs, move |pid, start| {
+        link_query.borrow_mut().clear();
+        link_search.set_text("");
+        link_only.set_active(false);
+        link_filter.changed(gtk::FilterChange::Different);
         target.set_visible_child_name("processes");
+        if let Some(snapshot) = &link_state.borrow().previous {
+            if let Some(value) = snapshot
+                .tasks
+                .iter()
+                .find(|t| t.pid == pid && t.start == start)
+            {
+                link_rows.ensure(value);
+            }
+        }
         for index in 0..process_sorted.n_items() {
             let object = process_sorted.item(index).unwrap();
             let t = task(&object);
@@ -559,12 +822,12 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         "caption",
     );
     root.append(&status);
-    let state = Rc::new(RefCell::new(State::default()));
     let selected = Rc::new(RefCell::new("cpu".into()));
     let ui = Rc::new(Ui {
         tabs: tabs.downgrade(),
         groups,
-        store,
+        rows,
+        filter,
         selection: selection.clone(),
         sorted,
         summary,
@@ -588,9 +851,12 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     tabs.connect_visible_child_name_notify(move |tabs| {
         if let Some(ui) = weak_ui.upgrade() {
             if tabs.visible_child_name().as_deref() != Some("processes") {
-                ui.store.remove_all();
+                ui.rows.clear();
             }
-            if !matches!(tabs.visible_child_name().as_deref(), Some("apps" | "process-tree")) {
+            if !matches!(
+                tabs.visible_child_name().as_deref(),
+                Some("apps" | "process-tree")
+            ) {
                 ui.groups.clear();
             }
             ui.update(&tab_state.borrow());
@@ -654,21 +920,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         }
     });
     let u = ui.clone();
-    selection.connect_selected_item_notify(move |s| {
-        if let Some(o) = s.selected_item() {
-            let t = task(&o);
-            let own = t.uid == unsafe { libc::geteuid() } && t.pid != std::process::id();
-            u.quit.set_sensitive(own);
-            u.end.set_sensitive(own);
-            u.info.set_text(&format!(
-                "{} · PID {} · {} · {}\n{}",
-                t.name, t.pid, t.user, t.status, t.executable
-            ));
-        } else {
-            u.quit.set_sensitive(false);
-            u.end.set_sensitive(false);
-        }
-    });
+    selection.connect_selected_item_notify(move |s| u.selection_details(s));
     for (b, force) in [(quit, false), (end, true)] {
         let parent = win.clone();
         let sel = selection.clone();
@@ -912,4 +1164,59 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         tabs.set_visible_child_name("performance");
     }
     stack.add_titled(&root, Some("task-manager"), "Task Manager");
+}
+
+#[cfg(test)]
+mod row_contracts {
+    use super::*;
+    #[test]
+    fn live_rows_keep_identity_and_replace_reused_pids() {
+        let store = gio::ListStore::new::<glib::BoxedAnyObject>();
+        let first = Task {
+            pid: 41,
+            start: 100,
+            name: "first".into(),
+            ..Default::default()
+        };
+        let old = Task {
+            pid: 42,
+            start: 200,
+            name: "old process".into(),
+            ..Default::default()
+        };
+        let born = reconcile_tasks(&store, &[first.clone(), old]);
+        store.splice(0, 0, &born);
+        let stable = store.item(0).unwrap();
+        let retired = store.item(1).unwrap();
+        let changed = Task {
+            name: "after exec".into(),
+            memory: 8192,
+            cpu: Some(12.),
+            ..first
+        };
+        let reused = Task {
+            pid: 42,
+            start: 300,
+            name: "different process".into(),
+            ..Default::default()
+        };
+        let new = Task {
+            pid: 43,
+            start: 400,
+            ..Default::default()
+        };
+        let born = reconcile_tasks(&store, &[changed, reused, new]);
+        assert_eq!(store.n_items(), 1);
+        assert_eq!(store.item(0).unwrap(), stable);
+        assert_eq!(task(&stable).name, "after exec");
+        assert_eq!(task(&stable).memory, 8192);
+        assert_eq!(born.len(), 2);
+        assert!(born
+            .iter()
+            .all(|o| o.upcast_ref::<glib::Object>() != &retired));
+        store.splice(store.n_items(), 0, &born);
+        assert_eq!(store.n_items(), 3);
+        assert_eq!(task(&retired).start, 200);
+        assert_eq!(task(&store.item(1).unwrap()).start, 300);
+    }
 }

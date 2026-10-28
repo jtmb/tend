@@ -206,6 +206,7 @@ impl View {
     }
 }
 pub struct Views {
+    tabs: glib::WeakRef<gtk::Stack>,
     apps: Rc<View>,
     tree: Rc<View>,
     snapshot: RefCell<Option<Arc<Snapshot>>>,
@@ -251,6 +252,7 @@ impl Views {
         tabs.add_titled(&a, Some("apps"), "Apps");
         tabs.add_titled(&t, Some("process-tree"), "Process tree");
         let views = Rc::new(Self {
+            tabs: tabs.downgrade(),
             apps,
             tree,
             snapshot: RefCell::new(None),
@@ -279,44 +281,49 @@ impl Views {
     fn repaint(&self) {
         let data = self.snapshot.borrow();
         let Some(s) = data.as_ref() else { return };
+        let active = self.tabs.upgrade().and_then(|t| t.visible_child_name());
         let uid = unsafe { libc::geteuid() };
         let tasks: std::collections::HashMap<_, _> =
             s.tasks.iter().map(|t| ((t.pid, t.start), t)).collect();
-        self.apps.replace(
-            s.applications
-                .iter()
-                .filter(|g| self.apps.other.is_active() || g.uid == uid)
-                .map(|g| {
-                    let members = g
-                        .members
-                        .iter()
-                        .filter_map(|id| tasks.get(&(id.pid, id.start_ticks)).copied())
-                        .map(|t| process(t, vec![], &s.boot_id))
-                        .collect();
-                    Node {
-                        key: g.id.clone(),
-                        name: g.name.clone(),
-                        cpu: g.cpu_percent,
-                        memory: g.memory_bytes,
-                        io: g
-                            .read_bytes_per_second
-                            .zip(g.write_bytes_per_second)
-                            .map(|(r, w)| r + w),
-                        detail: format!(
-                            "{} processes · {}",
-                            g.members.len(),
-                            if g.desktop_id.is_some() {
-                                "desktop app"
-                            } else {
-                                "process family"
-                            }
-                        ),
-                        pid: None,
-                        children: Arc::new(members),
-                    }
-                })
-                .collect(),
-        );
+        if active.as_deref() == Some("apps") {
+            self.apps.replace(
+                s.applications
+                    .iter()
+                    .filter(|g| self.apps.other.is_active() || g.uid == uid)
+                    .map(|g| {
+                        let members = g
+                            .members
+                            .iter()
+                            .filter_map(|id| tasks.get(&(id.pid, id.start_ticks)).copied())
+                            .map(|t| process(t, vec![], &s.boot_id))
+                            .collect();
+                        Node {
+                            key: g.id.clone(),
+                            name: g.name.clone(),
+                            cpu: g.cpu_percent,
+                            memory: g.memory_bytes,
+                            io: g
+                                .read_bytes_per_second
+                                .zip(g.write_bytes_per_second)
+                                .map(|(r, w)| r + w),
+                            detail: format!(
+                                "{} processes · {}",
+                                g.members.len(),
+                                if g.desktop_id.is_some() {
+                                    "desktop app"
+                                } else {
+                                    "process family"
+                                }
+                            ),
+                            pid: None,
+                            children: Arc::new(members),
+                        }
+                    })
+                    .collect(),
+            );
+        } else if self.apps.roots.n_items() > 0 {
+            self.apps.roots.remove_all();
+        }
         fn branch(
             n: process_groups::ProcessNode,
             s: &Snapshot,
@@ -336,11 +343,15 @@ impl Views {
                 &s.boot_id,
             ))
         }
-        self.tree.replace(
-            process_groups::forest(&s.tasks)
-                .into_iter()
-                .filter_map(|n| branch(n, s, self.tree.other.is_active(), uid))
-                .collect(),
-        );
+        if active.as_deref() == Some("process-tree") {
+            self.tree.replace(
+                process_groups::forest(&s.tasks)
+                    .into_iter()
+                    .filter_map(|n| branch(n, s, self.tree.other.is_active(), uid))
+                    .collect(),
+            );
+        } else if self.tree.roots.n_items() > 0 {
+            self.tree.roots.remove_all();
+        }
     }
 }

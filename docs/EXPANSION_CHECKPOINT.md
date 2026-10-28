@@ -522,3 +522,78 @@ retained reference; there is no compiler or native rendering suite alongside
 that measurement. The tracked goal remains active. Nothing is installed or
 published by this checkpoint, and no restart/schedule/authentication policy is
 changed. This result supersedes any wording implying every final gate passes.
+
+
+### Resource repeat completed; process-render optimization under verification
+
+The frozen optimized candidate passes all nine resource gates in
+../performance/tend-expansion-whole-app-budget-final.json: reference/candidate
+idle peaks 171.242 / 178.125 MiB, monitoring peak 178.133 MiB (+6.890625 MiB),
+0.043305% of one core over 600.388 seconds, 45 collections, zero subscriptions
+and verified stop. This run observed 18 major faults and one sustained-condition
+notification/history record on the private test bus; it did not notify the real
+desktop. Earlier zero-fault/no-event observations are a separate run.
+
+The normal-priority comparison also misses the interaction target: earlier
+candidate worst 252.237 ms, final frozen candidate 1957.126 ms. Both runs retained
+all inputs and had CPU pressure around 49–65%. Results are in
+../performance/tend-expansion-normal-priority-comparison.json. These are not
+release-ready latency results.
+
+The native timing harness now resolves test widgets before starting the measured
+callback-to-paint interval and records lookup/callback costs separately. Its
+functional assertions run after first paint, avoiding assertion traversal inside
+the measured interval. A corrected debug run still misses the target (203.725 ms),
+so the work is not being declared complete based on a measurement correction.
+
+An owned GDB preview shows Ui::update wall times of 338–794 ms. This includes
+GDB and host scheduling, so it is diagnostic evidence rather than a release
+benchmark. It identifies repeated process-row rebuilds as real work to remove.
+The current source reuses Task GObjects by PID/start identity, updates weakly
+registered cells, fills new rows in paced 25-row batches, cancels population on
+leaving/hiding, and restores selection by identity. A PID reuse contract passes.
+Only the visible Apps/Process tree model is built. Page navigation drops its
+extra crossfade; desktop animation settings remain unchanged.
+
+The first native run confirms complete process population, stable row objects and
+selection across refresh, and process links through an excluding search. It then
+hits the old immediate-population assertion on returning from charts; that test
+now waits for staged data instead. Pending-population Quit coverage is added.
+The new paced implementation is being built/repeated before optimized validation.
+A preliminary debug run before pacing misses the target at 181.347 ms. No release
+claim follows from it.
+
+Source checkpoint 44a88d2 retains the completed audit/docs/demo work. New rendering
+changes remain uncommitted. Prior normal binaries are hash-verified and retained
+under ../performance/release-0.3.0; they predate this latest UI optimization.
+No source has been uploaded or installed. No existing apps, schedules, restart,
+login or authentication policy have changed. Only owned QA displays and the
+completed local documentation server were stopped. The goal remains active.
+
+
+### Process population and date-cache contracts pass
+
+The paced native expansion workflow passes in tend-workflow-bq5frod2 and, after
+avoiding hidden Performance cards/homogeneous tab measurement, in
+`tend-workflow-_do2voft`. Both preserve every prepared input, show the full
+sampled process count, retain object identity and selection across refresh,
+select a process through an existing excluding search, release hidden models,
+and exit successfully with process population still pending. Storage/workspace,
+group/tree and diagnostic recording/comparison checks pass in the same run.
+
+New process rows arrive in 25-row/32-ms batches rather than an always-ready idle
+that could fill the entire table before the next frame. Surviving task objects
+and weakly registered cells are reused. Only the active subview builds widgets;
+normal page navigation no longer adds a crossfade. No hardware/display preference
+or running application was changed.
+
+Log indices are reused and timezone rules cached without freezing relative dates:
+a Toronto day key invalidates row identities at midnight or on reload. Three
+presentation tests and three UI/model tests pass, covering daylight/standard-time
+midnight, date-cache invalidation, PID reuse and the panel protocol. Current
+normal compilation is warning-free in these checks. The latest exploratory debug
+feedback run before the day-key guard has worst 142.528 ms: journal filters pass,
+but a few page paints exceed 100 ms. This is not an optimized release gate pass.
+The optimized build/interaction/resource reconciliation must still be repeated
+for this frozen source before installation or publication. Previous passing
+resource results refer to the retained earlier binary, not this new build.
