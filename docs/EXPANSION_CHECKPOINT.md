@@ -354,3 +354,171 @@ gates, complete accessibility/large-text/scale/contrast and design passes,
 real-workflow README/GIF refresh, matching backed-up deployment and publication.
 Nothing is installed or published by this checkpoint. No existing application,
 restart/login/auth policy or real system/user job has been changed.
+
+## Phase 7 — release audit and responsiveness fixes
+
+Source checkpoint only; no installed binary, system/user job, restart, login or
+administrator authorization policy has been changed.
+
+- Appearance imports now compare current values under the save lock and restore
+  both original preference files after a partial write failure. An incomplete
+  rollback is reported honestly. Imported monitoring thresholds include units.
+- Alert history has a bounded eight-report backlog, one writer at a time, with
+  at most 4 KiB per report. Overflow produces a counted history-gap record.
+  Optional crash notices are also retained. The native test confirms all seven
+  expected records, including a queued burst, and four private-bus notices.
+- The panel's menu status is compact; the full resource summary stays in the
+  tooltip. Monitoring controls have explicit accessible labels.
+- System logs use a native virtualized list and 25-event result pages. All
+  matching loaded events remain browsable/exportable. Selection maps to source
+  indices, and filters no longer copy full events or rebuild hundreds of rows.
+  Typed journal parsing and snapshot export run on workers. A completed export
+  cannot overwrite a newer filter's status. Weak control references avoid new
+  signal-reference cycles.
+- Keyboard traversal reproduced a GTK critical through collapsed expander
+  content. A retained GDB trace and upstream GtkExpander source identified its
+  child-visible focus check. Tend now aligns that flag with expansion state;
+  the corrected native run completes with GTK criticals fatal, not suppressed.
+- The optimized native run checks three passes of navigation and filtering,
+  including 1,000 generated journal events, paging, source selection and export
+  of all 500 filtered matches. All 63 first-painted-feedback measurements meet
+  the 100 ms target; the worst is 90.711 ms under Xvfb/Cairo. This does not measure
+  physical GPU latency or completion of external queries/animations.
+- All seventeen pages have narrow/wide captures and real keyboard-focus checks
+  in that run. Full theme/scale/contrast/large-text and dialog review is still
+  outstanding; these captures alone do not certify complete accessibility.
+- The existing feature regression targets generic text/JSON report exports on
+  Storage, where that retained utility lives. Structured Activity exports have
+  their own timeline workflow coverage.
+- The user installer now checks root-owned administrator/worker/adapter
+  capabilities and readiness before replacing user files. Four preflight tests
+  cover roles, flags, trust, timeouts/failures and incomplete markers. The live
+  read-only check correctly identifies the installed legacy integration as
+  needing its separate upgrade. The narrow installer dry run passes and writes
+  nothing; no authentication prompt was opened.
+- Current authoritative suites: 91 library tests plus one panel test passed;
+  one legacy fixture-deletion test remains intentionally ignored. All 61 Python
+  tests passed with no skips. Optimized native release, broader feature,
+  health/history and all ten settings-transfer section workflows pass with no
+  GTK warnings/criticals. Expected Xvfb DRI3 warnings remain.
+- Retained fixtures: release `tend-workflow-af4lz3nl`, broader features
+  `tend-workflow-fpzhqvhp`, health `tend-workflow-mgjg174i`, settings
+  `tend-workflow-tpjc0nlh`, all under `../performance/native-fixtures/`.
+  Logs: `../performance/tend-expansion-phase7-candidate-*.log`,
+  `tend-expansion-phase7-final-audit-{rust,python}.log`, and
+  `tend-expansion-phase7-deployment-dry-run.log`. Prepared cache/journal inputs
+  retain their original bytes and timestamps. Fifteen protected configuration
+  and schedule fingerprints still match the original baseline.
+
+The optimized reference/whole-app ten-minute monitoring measurement is running
+separately, without compilation or rendering suites. Its result must be inspected
+before claiming the CPU/RAM gates. Remaining gates include the complete visual
+and accessibility matrix, real-workflow README/GIF review, matching backed-up
+installation and publication. The existing tracked goal remains active.
+
+
+### Optimized whole-app result
+
+All whole-app gates pass in `../performance/tend-expansion-whole-app-budget.json`:
+60.06-second reference/candidate idle intervals and 600.09 seconds of enabled
+monitoring, +10.95 MiB peak RSS over reference (32 MiB limit), 0.0467% of one
+core (0.5% limit), zero measured major faults, one active monitoring subscriber
+and verified stop after disabling. Both private panel hosts registered; both
+owned previews exited normally. No unsolicited history database was created.
+See PERFORMANCE.md for the exact scope and retained binary hashes. Optional
+crash-query cost and physical GPU/desktop behavior are outside this run.
+The earlier paragraph describing this measurement as running is superseded by
+this result. Full accessibility, documentation/demo, integration deployment and
+publication still remain; the goal is active.
+
+
+### Final audit, native rendering and working demo
+
+The source is now version 0.3.0. This is still an active release goal: matching
+system installation and publication have not yet happened.
+
+- Current core contracts pass: 92 library tests and one panel test, with one
+  legacy fixture-deletion test intentionally ignored; all 63 Python tests pass.
+  The latest affected administrator contracts additionally reject overflowing
+  receipt dates. User scheduled receipts fsync their directory ancestry before
+  execution; a sandbox-only directory-fsync failure prevents cleanup, while a
+  completed-receipt failure cannot repeat the operation. Legitimate .local
+  directory aliases remain supported. No live maintenance was executed.
+- All seventeen pages pass six accessibility variants (102 retained captures),
+  with 24 page-footer geometry checks. Leaf captures exit successfully; the
+  original outer accessibility wrapper was later terminated with status 143
+  after completing captures, input verification and its final evidence files.
+  Independent metadata/PNG validation confirms all 102 results. Do not describe
+  that outer wrapper as a clean exit.
+- Ten settings-review sections and comparison dialogs pass all six variants.
+  There are 174 dialog captures and 324 checked footer actions across settings,
+  monitoring/history and cleanup/exclusions. The 132 settings captures were
+  repeated with process-local reduced motion after visual review caught opening
+  transitions in earlier images. All six settled contact sheets were reviewed;
+  the desktop preferences are unchanged. Metadata validates device scale, text
+  DPI, contrast, theme, PNG dimensions and footer bounds. Screen-reader and
+  physical-desktop animation interoperability remain distinct checks.
+- The recording exposed expensive hidden Task Manager table updates. Charts now
+  skip rebuilding hidden process/group models. Switching tabs refreshes from
+  the current cached snapshot. The repeated expansion workflow verifies empty
+  hidden models during live chart collection and populated data on returning
+  to Processes, plus storage, workspace, grouping and diagnostics workflows.
+  Fixture: ../performance/native-fixtures/tend-workflow-8l69p0hy. Its direct
+  callback navigation produced one nonfatal GtkText focus-out warning; it is
+  not a clean physical-input/session interoperability test.
+- The app-owned recorder now runs below GTK frame-clock priority: PNG encoding
+  on a busy host previously starved allocation and scrolling. It uses the normal
+  1100×760 window and preview-local reduced motion, with actual visible widget
+  bounds checked before actions. Failed capture process groups are terminated
+  so an owned preview cannot continue consuming CPU after its wrapper exits.
+- The refreshed demo completes real preview and log workflows: two eligible
+  files / 3 MiB, six loaded events → two errors → one editor match, and selected
+  PID 4100 details. All six sample input hashes, sizes and timestamps remain
+  unchanged. Source fixture: /tmp/opencode/tend-workflow-ismpu387. The shared-
+  palette GIF is 629,483 bytes, 1090×820, 38 seconds, looping; its 304 source
+  captures merge into 106 encoded frames. Decoded action/result scenes were
+  visually reviewed. The five gallery images were refreshed, with adjacent
+  local backups retained and excluded from publication.
+- Local rendering of the actual README passes desktop and 390-pixel viewport
+  review: opening/demo, feature grouping and installation. All six image assets
+  load; there is no horizontal page overflow. Code blocks scroll independently.
+  Public GitHub animation verification is still pending publication.
+
+Raw checks: ../performance/tend-expansion-page-accessibility-verified.json,
+tend-expansion-dialog-accessibility-verified.json, tend-expansion-readme-media.json,
+tend-expansion-phase7-settled3-*.log and tend-expansion-phase7-frame-clock-demo.log.
+The optimized docs candidate builds successfully (SHA-256
+123ef37eee56c578b687b191de6b41ef1bc8580feb71ea47ecaf2755efbf7a9b).
+Normal release binaries are being built. The final native/resource reconciliation,
+narrow integration dry run, protected-setting fingerprints, deployment and
+publication remain outstanding. Nothing has scheduled or triggered a restart,
+closed an existing application, or changed live cleanup, login or authentication
+policy. The only terminated app processes were owned isolated QA previews.
+
+
+### Frozen artifacts and unresolved final latency gate
+
+Both optimized builds complete: normal app SHA-256
+29b14cefca0413dbcc9ef21c06933f81fe9952b66bb33afb8926780faa9d005e
+(4,035,160 bytes), administrator
+d50aa2b0d8497fc4924dba4b8bac7552a90086267925f30246dcace832b440a4,
+worker 440e39ad4872c638518e9e10ecde04c7dd063506a6596e153623ef400e8f59fd.
+Two nonfatal unused-import warnings are retained in the normal build log.
+The matching integration dry run passes all ten destinations and changes nothing.
+All fifteen protected settings/schedule fingerprints still match the baseline.
+
+The frozen candidate's final native repeat completes functional checks, all
+63 observations and 34 captures, but **fails** the latency target: worst
+2266.105 ms on the first Task Manager navigation, with several other observations
+over 100 ms. Fixture: tend-workflow-hgurg0kp. The native harness historically
+reports this as an explicit JSON gate while exiting successfully; process exit
+must not be used as proof of meeting the metric. The test inherited nice 10
+while the normal app uses nice 0. Host CPU pressure was around 50%; existing
+OpenCode/ChatGPT and other apps are left alone. This does not yet establish the
+cause of the difference. A normal-priority comparison is pending.
+
+The final ten-minute resource repeat is now running separately against the
+retained reference; there is no compiler or native rendering suite alongside
+that measurement. The tracked goal remains active. Nothing is installed or
+published by this checkpoint, and no restart/schedule/authentication policy is
+changed. This result supersedes any wording implying every final gate passes.

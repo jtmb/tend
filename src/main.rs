@@ -13,6 +13,12 @@ mod monitor;
 mod health_ui;
 mod history_ui;
 mod settings_ui;
+#[cfg(feature="docs-demo")]
+#[path="../docs/demo/budget_probe.rs"]
+mod budget_probe;
+#[cfg(feature="docs-demo")]
+#[path="../docs/demo/release_qa.rs"]
+mod release_qa;
 mod panel;
 mod process_tree_ui;
 mod storage_history_ui;
@@ -526,7 +532,7 @@ fn build(app: &adw::Application) {
     health_ui::add(&care,&win,app);
     history_ui::add(&care,&win);
     settings_ui::add(&care,&win,app,&stack);
-    care.append(&label("Tend 0.2", "caption"));
+    care.append(&label(&format!("Tend {}",env!("CARGO_PKG_VERSION")), "caption"));
     stack.add_titled(&scroll(&care), Some("care"), "Preferences");
     activity_ui::add(&stack,&win);
     let (n, f, l, p, b) = (
@@ -613,6 +619,7 @@ fn build(app: &adw::Application) {
             sidebar.append(&button);
         }
     }
+    editor::guard_expanders(&outer);
     win.set_content(Some(&outer));
     win.present();
     for target in ["diagnostics","system-logs","activity","storage"] {
@@ -635,6 +642,14 @@ fn build(app: &adw::Application) {
         docs_demo::health_qa(app,&win,&outer,&stack,&directory);return;
     }
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
+    #[cfg(feature="docs-demo")]
+    if let Ok(directory)=std::env::var("TEND_RELEASE_QA"){release_qa::run(app,&win,&outer,&stack,&directory);return;}
+    #[cfg(feature="docs-demo")]
+    if let Ok(directory)=std::env::var("TEND_APP_BUDGET_QA") {
+        use std::rc::Rc;
+        let enabled_app=app.clone();let stopped_app=app.clone();
+        budget_probe::run(app,&win,&stack,&directory,Some(Rc::new(move||{let mut settings=tend::health::Settings::read()?;settings.enabled=true;settings.save()?;health_ui::reload(&enabled_app);Ok(())})),Rc::new(move||{let mut settings=tend::health::Settings::read()?;settings.enabled=false;settings.save()?;health_ui::reload(&stopped_app);Ok(())}),Rc::new(||monitor::budget_stats()));return;
+    }
     #[cfg(feature = "docs-demo")]
     if std::env::var_os("TEND_PERF_QA").is_some() {
         return;

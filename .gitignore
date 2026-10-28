@@ -3,3 +3,6 @@
 
 __pycache__/
 *.pyc
+
+# Retain adjacent local documentation backups without publishing them.
+/assets/*.backup.*

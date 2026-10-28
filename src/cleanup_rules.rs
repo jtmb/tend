@@ -464,10 +464,29 @@ fn read_scheduled_state(path:&Path)->Result<serde_json::Value,String> {
     let state:serde_json::Value=serde_json::from_str(&text).map_err(|e|format!("Invalid cleanup receipt; nothing repeated: {e}"))?;
     let object=state.as_object().ok_or("Invalid cleanup receipt object")?;
     let allowed=["last_due","failed_due","attempts","report","finished_unix","running_due","started_unix","duration_ms","previous_uncertain_due"];
-    if object.keys().any(|key|!allowed.contains(&key.as_str()))||object.iter().any(|(key,v)|if key=="report" {!v.is_string()}else {!v.is_null()&&v.as_u64().is_none()})||state["attempts"].as_u64().is_some_and(|n|n>3) {
+    let dates=["last_due","failed_due","finished_unix","running_due","started_unix","previous_uncertain_due"];
+    if object.keys().any(|key|!allowed.contains(&key.as_str()))||object.iter().any(|(key,v)|if key=="report" {!v.is_string()}else {!v.is_null()&&v.as_u64().is_none()})||object.iter().any(|(key,v)|dates.contains(&key.as_str())&&!v.is_null()&&v.as_i64().is_none())||state["attempts"].as_u64().is_some_and(|n|n>3) {
         return Err("Invalid cleanup receipt fields; existing file preserved.".into());
     }
     Ok(state)
+}
+// File fsync + rename alone does not persist a newly created directory entry.
+// Commit the receipt's directory chain before allowing a cleanup to execute.
+fn persist_receipt_with(path:&Path,home:&Path,text:&str,mut sync:impl FnMut(&Path)->Result<(),String>)->Result<(),String>{
+    if !path.parent().is_some_and(|p|p.ancestors().any(|p|p==home)){return Err("Cleanup receipt is outside the expected home directory.".into());}
+    w::private_write(path,text)?;
+    let mut directory=path.parent().unwrap();
+    loop{
+        sync(directory).map_err(|e|format!("Cleanup receipt directory sync failed at {}: {e}",directory.display()))?;
+        if directory==home{return Ok(());}
+        directory=directory.parent().ok_or("Cleanup receipt directory chain is incomplete")?;
+    }
+}
+fn persist_scheduled_receipt(path:&Path,text:&str)->Result<(),String>{
+    persist_receipt_with(path,&w::home(),text,|directory|{
+        let file=fs::OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY).open(directory).map_err(|e|e.to_string())?;
+        file.sync_all().map_err(|e|e.to_string())
+    })
 }
 pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     let s = Schedule::load()?;
@@ -528,7 +547,7 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     let mut report=format!("Scheduled user cleanup\nDue: {}\nStarted: {}\nAttempt {attempt} of 3\nDelay from schedule: {:.1} minutes\n",crate::presentation::when(due),crate::presentation::when(now),(now-due).max(0) as f64/60.);
     if let Some(old)=state["running_due"].as_i64() {state["previous_uncertain_due"]=old.into();report.push_str("An earlier maintenance date has an uncertain result; this run processes only the latest due date.\n");}
     state["running_due"]=due.into();state["started_unix"]=now.into();
-    w::private_write(&path,&serde_json::to_string_pretty(&state).map_err(|e|e.to_string())?)?;
+    persist_scheduled_receipt(&path,&serde_json::to_string_pretty(&state).map_err(|e|e.to_string())?)?;
     let started=crate::observations::boot_millis();
     if apt {
         report.push_str("APT cache remains handled by the existing system maintenance job.\n");
@@ -563,7 +582,7 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
     if let Some(duration)=duration {report.push_str(&format!("\nElapsed: {:.1} seconds",duration as f64/1000.));}
     let mut end=report.len().min(8192);while !report.is_char_boundary(end) {end-=1;}
     state["report"]=format!("{}{}",&report[..end],if end<report.len(){"\nReceipt report truncated; saved history may contain more."}else{""}).into();
-    if let Err(error)=w::private_write(&path,&serde_json::to_string_pretty(&state).map_err(|e|e.to_string())?) {
+    if let Err(error)=persist_scheduled_receipt(&path,&serde_json::to_string_pretty(&state).map_err(|e|e.to_string())?) {
         report.push_str(&format!("\nThe operation result is above; its completed receipt could not be saved: {error}. The running receipt blocks automatic replay for this date."));
     }
     w::audit_result("scheduled-cleanup",if success {Ok(report)}else {Err(report)})
@@ -572,6 +591,18 @@ pub fn scheduled(apply_changes: bool) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scheduled_receipt_syncs_ancestry_and_stops_on_sync_failure(){
+        let parent=std::env::var_os("TEND_TEST_FIXTURES").map(PathBuf::from).unwrap_or_else(||PathBuf::from("/tmp/opencode"));
+        let root=parent.join(format!("tend-receipt-contract-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path=root.join(".local/state/tend/scheduled-cleanup.json");let mut synced=vec![];
+        persist_receipt_with(&path,&root,"{\"running_due\":1}",|directory|{assert!(fs::read_to_string(&path).unwrap().contains("running_due"));synced.push(directory.to_path_buf());Ok(())}).unwrap();
+        assert_eq!(synced,vec![root.join(".local/state/tend"),root.join(".local/state"),root.join(".local"),root.clone()]);
+        let error=persist_receipt_with(&path,&root,"{\"running_due\":2}",|_|Err("injected sync failure".into())).unwrap_err();
+        assert!(error.contains("directory sync failed"));assert!(fs::read_to_string(&path).unwrap().contains(":2"));
+        let outside=root.with_extension("outside").join("scheduled-cleanup.json");assert!(!outside.exists());
+        assert!(persist_receipt_with(&outside,&root,"{}",|_|Ok(())).is_err());assert!(!outside.exists());
+    }
     #[test]
     fn cleanup_rules_cannot_remove_tend_receipts_or_live_history() {
         let home=Path::new("/home/fixture");

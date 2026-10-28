@@ -37,6 +37,7 @@ struct Runtime {
     crash_ids: VecDeque<u64>,
     cancel: Arc<AtomicBool>,
     audit_busy: bool,
+    audit_queue: tend::health::AuditQueue,
 }
 thread_local! {static RUNTIME:RefCell<Option<Rc<RefCell<Runtime>>>>=const{RefCell::new(None)};}
 fn runtime() -> Option<Rc<RefCell<Runtime>>> {
@@ -98,6 +99,15 @@ pub fn summary() -> String {
             ""
         }
     )
+}
+/// Compact menu label; the full resource summary remains in the tooltip.
+pub fn panel_status() -> String {
+    let Some(r)=runtime() else{return "Monitoring unavailable".into();};let r=r.borrow();
+    if !r.settings.enabled{return "Monitoring off".into();}
+    if r.last.as_ref().is_none_or(|(at,_)|clock().saturating_sub(*at)>45000)||r.error.is_some(){return "Monitoring waiting or stale".into();}
+    if r.engine.snoozed(clock()){return "Notifications snoozed".into();}
+    if r.engine.active_count()>0{return format!("Monitoring · {} active conditions",r.engine.active_count());}
+    "Monitoring live".into()
 }
 pub fn tooltip() -> String {
     let text = summary();
@@ -188,6 +198,7 @@ pub fn install(app: &adw::Application) {
         crash_ids: VecDeque::new(),
         cancel: Arc::new(AtomicBool::new(false)),
         audit_busy: false,
+        audit_queue: Default::default(),
     }));
     RUNTIME.with(|cell| *cell.borrow_mut() = Some(r));
     if initial.enabled {
@@ -231,7 +242,7 @@ fn apply(app: &adw::Application, settings: &Settings) {
 }
 fn notify(app: &adw::Application, title: String, body: String, generation: u64) {
     #[cfg(feature = "docs-demo")]
-    if std::env::var_os("TEND_DEMO_DIR").is_some() && std::env::var_os("TEND_HEALTH_QA").is_none() {
+    if std::env::var_os("TEND_DEMO_DIR").is_some() && std::env::var_os("TEND_HEALTH_QA").is_none() && std::env::var_os("TEND_APP_BUDGET_QA").is_none() {
         return;
     }
     let weak = app.downgrade();
@@ -340,37 +351,30 @@ fn receive_at(app: &adw::Application, update: Update, now: u64) {
             .map(|n| format!("{}\n{}", n.title(), n.body()))
             .collect::<Vec<_>>()
             .join("\n\n");
-        // At most one bounded write in flight. Notifications still work when
-        // history is locked, full or unavailable; writes never drive retries.
-        if !r.borrow().audit_busy {
-            r.borrow_mut().audit_busy = true;
-            job(
-                move || w::record("health-alert", &report),
-                move |result| {
-                    if let Some(r) = runtime() {
-                        let mut r = r.borrow_mut();
-                        r.audit_busy = false;
-                        if r.generation != generation {
-                            return;
-                        }
-                        drop(r);
-                        if let Err(e) = result {
-                            delivery_failure(generation, &e);
-                        }
-                    }
-                },
-            );
-        } else {
-            delivery_failure(
-                generation,
-                "An alert was not saved because another history write is pending.",
-            );
-        }
+        enqueue_audit(&report, generation);
     }
     if crash {
         read_crashes(app, generation);
     }
     refresh();
+}
+fn enqueue_audit(report: &str, generation: u64) {
+    let Some(r)=runtime() else {return;};
+    let accepted=r.borrow_mut().audit_queue.push(report);
+    if !accepted {delivery_failure(generation,"Alert history backlog is full; omitted reports will be recorded as a counted gap.");}
+    drain_audit();
+}
+fn drain_audit() {
+    let Some(r)=runtime() else {return;};
+    let next={let mut r=r.borrow_mut();if r.audit_busy {return;}
+        r.audit_queue.pop().map(|report|{r.audit_busy=true;(report,r.generation)})};
+    let Some((report,generation))=next else {return;};
+    job(move||w::record("health-alert",&report),move|result|{
+        if let Some(r)=runtime(){r.borrow_mut().audit_busy=false;}
+        if let Err(e)=result{delivery_failure(generation,&e);}
+        // One bounded write at a time; never retry a failed operation/report.
+        drain_audit();
+    });
 }
 fn read_crashes(app: &adw::Application, generation: u64) {
     let Some(r) = runtime() else {
@@ -441,7 +445,9 @@ fn read_crashes(app: &adw::Application, generation: u64) {
             }
             drop(r);
             if !sources.is_empty() && !snoozed {
-                notify(&app,"Recent application crashes".into(),format!("{}\nOpen System logs for the reports. Up to 100 recent visible reports are checked; inaccessible reports are not included.",sources.join("\n")),generation);
+                let body=format!("{}\nOpen System logs for the reports. Up to 100 recent visible reports are checked; inaccessible reports are not included.",sources.join("\n"));
+                notify(&app,"Recent application crashes".into(),body.clone(),generation);
+                enqueue_audit(&format!("Recent application crashes\n{body}"),generation);
             }
             refresh();
         },
@@ -544,10 +550,12 @@ fn open_editor(win: &adw::ApplicationWindow, app: &adw::Application) {
         let check = gtk::CheckButton::new();
         check.set_active(rule.enabled);
         check.set_tooltip_text(Some(&format!("Enable {name}")));
+        check.update_property(&[gtk::accessible::Property::Label(&format!("Enable {name}"))]);
         let spin = gtk::SpinButton::with_range(min, max, step);
         spin.set_digits(if step < 1. { 1 } else { 0 });
         spin.set_value(rule.threshold);
         spin.set_tooltip_text(Some(&format!("{name} threshold")));
+        spin.update_property(&[gtk::accessible::Property::Label(&format!("{name} threshold")),gtk::accessible::Property::Description(description)]);
         line.append(&check);
         line.append(&spin);
         row(&group, name, description, &line);
@@ -779,4 +787,14 @@ pub fn qa_crashes(app: &adw::Application) {
     let generation = r.generation;
     drop(r);
     read_crashes(app, generation);
+}
+
+#[cfg(feature="docs-demo")]
+pub fn qa_audit_burst() {
+    assert!(std::env::var_os("TEND_HEALTH_QA").is_some());
+    let r=runtime().unwrap();let already_busy=r.borrow().audit_busy;
+    r.borrow_mut().audit_busy=true;
+    let generation=r.borrow().generation;
+    for n in 0..3 {enqueue_audit(&format!("Fixture bounded alert backlog #{n}; no notification or system action."),generation);}
+    if !already_busy{r.borrow_mut().audit_busy=false;drain_audit();}
 }

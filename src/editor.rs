@@ -6,6 +6,23 @@ use std::{
     rc::Rc,
 };
 
+/// GtkExpander unparents collapsed content but its focus path checks
+/// child-visible. Keep that flag consistent so Tab never visits an unrooted
+/// child (reproduced with fatal GTK criticals; see upstream gtkexpander.c).
+pub fn guard_expanders(root:&impl IsA<gtk::Widget>){
+    let widget=root.as_ref();
+    if let Some(expander)=widget.downcast_ref::<gtk::Expander>(){
+        if !expander.has_css_class("tend-expander-focus-guard"){
+            expander.add_css_class("tend-expander-focus-guard");
+            if let Some(child)=expander.child(){child.set_child_visible(expander.is_expanded());}
+            expander.connect_expanded_notify(|e|{if let Some(child)=e.child(){child.set_child_visible(e.is_expanded());}});
+            expander.connect_child_notify(|e|{if let Some(child)=e.child(){child.set_child_visible(e.is_expanded());guard_expanders(&child);}});
+        }
+        if let Some(child)=expander.child(){guard_expanders(&child);}
+    }
+    let mut child=widget.first_child();while let Some(w)=child{child=w.next_sibling();guard_expanders(&w);}
+}
+
 #[derive(Clone)]
 pub struct Notice {
     pub root: gtk::Box,
@@ -38,6 +55,7 @@ impl Notice {
             .child(&detail_scroll)
             .build();
         details.set_visible(false);
+        guard_expanders(&details);
         root.append(&line);
         root.append(&details);
         root.set_visible(false);
@@ -194,6 +212,7 @@ impl Footer {
 }
 
 pub fn shell(body: &gtk::Box, footer: &Footer) -> gtk::Box {
+    guard_expanders(body);
     let root = column(0);
     root.set_widget_name("editor-page");
     root.append(&scroll(body));

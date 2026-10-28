@@ -4,15 +4,16 @@ Goal: deliver all twelve approved features in tested phases, preserving Rust/GTK
 bounded resources and local data. No restarts, application closures, new jobs,
 or restart/login/authentication policy changes during implementation or delivery.
 
-## Planning checkpoint — October 26, 2026
+## Planning checkpoint — October 28, 2026
 
-The existing tracked goal remains active. This plan covers the entire feature
-set; source work already present is subject to the same completion gates as new
-work. Phases 1–4 have source implementation and recorded checks, with final
-resource, accessibility and deployment gates outstanding. None of this
-constitutes a completed expansion release. The planning checkpoint changed
-documentation only; subsequent implementation is recorded separately in the
-completion ledger and checkpoint. The running app and schedules are unchanged.
+The existing tracked goal remains active. This plan covers all twelve features.
+All seven phases now have source implementations, with recorded unit, native
+workflow and isolated contract checks. The whole-app performance gates and page/dialog geometry matrix pass.
+Final artifact reconciliation, integration deployment and publication
+remain outstanding; this is not a completed expansion release. Existing source work must
+meet the same gates as new work. This planning refresh changes documentation
+only. It does not install binaries, change schedules, close applications or
+schedule/trigger restarts. Detailed evidence remains in EXPANSION_CHECKPOINT.md.
 
 ## Agreed defaults
 
@@ -29,13 +30,13 @@ completion ledger and checkpoint. The running app and schedules are unchanged.
 
 | Phase | Requirements | Completion evidence |
 | --- | --- | --- |
-| 1 — Foundations | Shared demand-driven sampler; stable process identity; structured observations; private bounded history; helper capabilities; performance baseline. | Collector, identities, observations, private SQLite store and explicit capabilities implemented; unit/native checks pass. Collector CPU/memory/stop probes pass; optimized full-app budgets remain pending. |
+| 1 — Foundations | Shared demand-driven sampler; stable process identity; structured observations; private bounded history; helper capabilities; performance baseline. | Collector, identities, observations, private SQLite store and explicit capabilities implemented; unit/native checks pass. Collector CPU/memory/stop probes pass; optimized full-app default CPU/RAM budgets pass. |
 | 2 — Processes and diagnostics | App groups/process trees; three-minute evidence-based slowdown capture (2s default, max15m); markers; saved workload comparisons and uncertainty. | App groups/tree, bounded recording, markers, save/load and comparisons implemented. Real-widget workflows and regressions pass; final accessibility/resource gates pending. |
 | 3 — Storage and workspaces | Lossless file metadata, added/removed/changed comparisons, incomplete-scan protection, retention/quota; registered projects with corrected process/container mappings and cached storage reports. | Streaming metadata snapshots and paged change history implemented and tested for core/native workflows. Million-entry generated index meets memory target. Workspaces and native/sandbox contracts implemented; final accessibility/performance and remaining boundary gates pending. |
 | 4 — Cleanup protection | Typed explained plans; global exclusions in manual/cron/daily paths; skip incompatible bulk operations; preview invalidation; matching helper/worker/adapter capabilities. | Typed plans, paged explanations and a shared editor implemented. Rust, Python, native cleanup/expansion, visual matrix and isolated integration contracts pass. Matching production deployment and final resource/accessibility gates remain pending. |
-| 5 — History | Maintenance phase outcomes/duration/retries/catch-up/net-space observations; incident timeline across crashes, updates, maintenance and recorded pressure; no invented legacy history or causal claims. | Bounded durable phase receipts, private reports and native paginated timeline implemented. Rust/native/sandbox checks pass; one legacy namespace notification mock SIGSEGV is explicitly unverified. Matching deployment and final resource/accessibility gates remain pending. |
-| 6 — Alerts and panel | Optional15s cheap hidden monitoring; bounded optional crash reads; configurable alert hold/cooldown/snooze/recovery; fresh/paused panel summary and non-destructive shortcuts. | Opt-in shared monitoring, native editor, bounded optional crash reads, alert state machine and live panel implemented. Rust/native/private-bus/panel/visual/contract checks pass. Optimized ten-minute whole-app and final accessibility gates remain pending in phase 7. |
-| 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | All twelve features now have source implementation: versioned settings bundles, inactive drafts, ten native review sections, history limits and clock-order fixes pass Rust/native/sandbox checks. Complete resource/accessibility/integration gates, final documentation/demo, deployment and publication remain outstanding. |
+| 5 — History | Maintenance phase outcomes/duration/retries/catch-up/net-space observations; incident timeline across crashes, updates, maintenance and recorded pressure; no invented legacy history or causal claims. | Bounded durable phase receipts, private reports and native paginated timeline implemented. Rust/native/sandbox checks pass. The latest settings-transfer checkpoint records the repaired notification dispatch contract and separate private-bus protocol checks. Matching deployment and final resource/accessibility gates remain pending. |
+| 6 — Alerts and panel | Optional15s cheap hidden monitoring; bounded optional crash reads; configurable alert hold/cooldown/snooze/recovery; fresh/paused panel summary and non-destructive shortcuts. | Opt-in shared monitoring, native editor, bounded optional crash reads, alert state machine and live panel implemented. Rust/native/private-bus/panel/visual/contract checks pass. Optimized ten-minute whole-app budgets and page/dialog geometry pass; final settled visual review remains in phase 7. |
+| 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | All twelve features now have source implementation: versioned settings bundles, inactive drafts, ten native review sections, history limits and clock-order fixes pass Rust/native/sandbox checks. An earlier optimized candidate passes 63 callbacks (worst 90.711 ms). The final repeat at nice 10 misses the latency target; normal desktop-priority comparison remains pending. Optimized default-monitoring CPU/RAM and collector-stop gates pass (+10.95 MiB, 0.0467% of one core over 600 seconds). All seventeen pages pass six accessibility variants; 174 dialog captures pass geometry checks. Settled visual review and the working README demo pass. Final artifact reconciliation, deployment and publication remain outstanding. |
 
 ## Phased delivery plan
 

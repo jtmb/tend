@@ -70,7 +70,7 @@ fn properties(id: i32) -> HashMap<String, glib::Variant> {
     } else if let Some(label) = match id {
         1 => Some("Open Tend".into()),
         3 => Some("Quit Tend".into()),
-        4 => Some(crate::health_ui::summary()),
+        4 => Some(crate::health_ui::panel_status()),
         5 => Some("Record diagnostics".into()),
         6 => Some("System logs".into()),
         9 => Some("Activity and reports".into()),
@@ -119,7 +119,7 @@ pub fn install(app: &adw::Application, ready: Rc<Cell<bool>>) {
     // Preview instances must never register an icon on the real desktop.
     let protocol_test = cfg!(feature = "docs-demo")
         && (std::env::var_os("TEND_PANEL_QA").is_some()
-            || std::env::var_os("TEND_HEALTH_QA").is_some());
+            || std::env::var_os("TEND_HEALTH_QA").is_some() || std::env::var_os("TEND_APP_BUDGET_QA").is_some());
     if std::env::var_os("TEND_SCREENSHOT").is_some() && !protocol_test {
         return;
     }

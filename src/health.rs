@@ -9,6 +9,45 @@ use std::{
     path::PathBuf,
 };
 
+/// Bounded alert-report backlog. History contention never blocks notification
+/// delivery or grows memory without limit. Overflow is recorded explicitly.
+#[derive(Default)]
+pub struct AuditQueue {
+    pending: std::collections::VecDeque<String>,
+    omitted: u64,
+}
+impl AuditQueue {
+    pub const CAPACITY: usize = 8;
+    pub const REPORT_BYTES: usize = 4096;
+    pub fn push(&mut self, report: &str) -> bool {
+        if self.pending.len() == Self::CAPACITY {
+            self.omitted = self.omitted.saturating_add(1);
+            return false;
+        }
+        let mut end = report.len().min(Self::REPORT_BYTES - 64);
+        while !report.is_char_boundary(end) {
+            end -= 1;
+        }
+        let clipped = end < report.len();
+        let mut saved = report[..end].to_owned();
+        if clipped {
+            saved.push_str("\n[Alert report truncated to its bounded history limit.]");
+        }
+        self.pending.push_back(saved);
+        true
+    }
+    pub fn pop(&mut self) -> Option<String> {
+        if let Some(report) = self.pending.pop_front() {
+            return Some(report);
+        }
+        if self.omitted == 0 {
+            return None;
+        }
+        let omitted = std::mem::take(&mut self.omitted);
+        Some(format!("Alert history backlog exceeded its limit. {omitted} reports were omitted; desktop notification delivery was independent."))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
@@ -538,5 +577,30 @@ mod tests {
             assert!(e.update(&unknown, t).is_empty());
         }
         assert_eq!(e.active_count(), 4);
+    }
+}
+
+#[cfg(test)]
+mod audit_queue_tests {
+    use super::AuditQueue;
+    #[test]
+    fn fifo_overflow_is_reported_once_and_utf8_is_bounded() {
+        let mut q = AuditQueue::default();
+        for n in 0..AuditQueue::CAPACITY {
+            assert!(q.push(&n.to_string()));
+        }
+        for _ in 0..3 {
+            assert!(!q.push("omitted"));
+        }
+        for n in 0..AuditQueue::CAPACITY {
+            assert_eq!(q.pop(), Some(n.to_string()));
+        }
+        assert!(q.pop().unwrap().contains("3 reports were omitted"));
+        assert!(q.pop().is_none());
+        assert!(q.push(&"é".repeat(5000)));
+        let report = q.pop().unwrap();
+        assert!(report.len() <= AuditQueue::REPORT_BYTES);
+        assert!(report.ends_with("[Alert report truncated to its bounded history limit.]"));
+        assert!(q.pop().is_none());
     }
 }

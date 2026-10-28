@@ -105,6 +105,22 @@ int main(int argc,char **argv){
 '''
         subprocess.run(['nice','-n','10','ionice','-c','3','cc','-x','c','-o',str(cls.notification),'-'],input=source,text=True,capture_output=True,check=True)
         cls.notification.chmod(0o755)
+        # Inject directory-fsync failure only inside the private namespace;
+        # ordinary file fsync still calls libc. Nothing is installed on the host.
+        cls.directory_sync_failure=cls.binaries/'directory-sync-failure.so'
+        sync_source=r'''#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
+int fsync(int fd){
+ struct stat info;if(fstat(fd,&info)==0 && S_ISDIR(info.st_mode)){errno=EIO;return -1;}
+ int(*original)(int)=(int(*)(int))dlsym(RTLD_NEXT,"fsync");
+ if(!original){errno=ENOSYS;return -1;}return original(fd);
+}
+'''
+        subprocess.run(['nice','-n','10','ionice','-c','3','cc','-shared','-fPIC','-x','c','-o',str(cls.directory_sync_failure),'-','-ldl'],input=sync_source,text=True,capture_output=True,check=True)
+        cls.directory_sync_failure.chmod(0o755)
         for name in ('tend-admin','tend-worker'):
             target=cls.binaries/name
             shutil.copyfile(ROOT/'target/debug'/name,target);target.chmod(0o755)
@@ -144,7 +160,7 @@ int main(int argc,char **argv){
         p.chmod(0o600 if name.startswith('home/james/.config/tend/') else 0o644)
         return p
 
-    def invoke(self,action,data=None,*extra,fail='',uid='0',api=False,engine=False):
+    def invoke(self,action,data=None,*extra,fail='',uid='0',api=False,engine=False,fail_directory_sync=False):
         cmd=['bwrap','--die-with-parent','--unshare-all','--new-session',
              '--uid','0','--gid','0','--cap-drop','ALL',
              '--tmpfs','/usr',
@@ -176,6 +192,9 @@ int main(int argc,char **argv){
                 '--setenv','TEND_QA_SANDBOX','1',
                 '--setenv','TEND_SANDBOX_FAIL',fail,'--setenv','TEND_SANDBOX_UID',uid,
                 '--',*entrypoint,action,*extra]
+        if fail_directory_sync:
+            separator=cmd.index('--')
+            cmd[separator:separator]=['--ro-bind',str(self.directory_sync_failure),'/qa/directory-sync-failure.so','--setenv','LD_PRELOAD','/qa/directory-sync-failure.so']
         result=subprocess.run(cmd,input='' if data is None else json.dumps(data),
                               text=True,capture_output=True,timeout=30)
         with (self.stage/'qa/results.jsonl').open('a') as f:
@@ -471,6 +490,11 @@ sys.exit(engine.main())'''
         path.write_text('{broken')
         malformed=self.invoke('scheduled-run',api=True,uid='1000')
         self.assertNotEqual(malformed.returncode,0);self.assertIn('Invalid cleanup receipt',malformed.stderr);self.assertEqual(path.read_text(),'{broken')
+        for field in ['last_due','failed_due','finished_unix','running_due','started_unix','previous_uncertain_due']:
+            path.write_text(json.dumps({field:2**64-1}));before=path.read_bytes()
+            overflow=self.invoke('scheduled-run',api=True,uid='1000')
+            self.assertNotEqual(overflow.returncode,0);self.assertIn('Invalid cleanup receipt',overflow.stderr);self.assertEqual(path.read_bytes(),before)
+            self.assertEqual(len(self.commands()),count)
         path.write_text('{}');history.parent.chmod(0o500)
         mutations=sum(c['program']=='id' for c in self.commands())
         stopped=self.invoke('scheduled-run',api=True,uid='1000')
@@ -478,6 +502,26 @@ sys.exit(engine.main())'''
         self.assertEqual(sum(c['program']=='id' for c in self.commands()),mutations)
         history.parent.chmod(0o700)
         self.assertEqual(history.read_text(),'preserved corrupt fixture')
+
+    def test_user_schedule_stops_before_cleanup_if_receipt_directory_cannot_be_synced(self):
+        config='home/james/.config/tend/'
+        self.write(config+'cleanup-schedule.json',json.dumps(dict(enabled=True,expression='0 0 1 1 *',catch_up=True)))
+        self.write(config+'cleanup.json',json.dumps(dict(apt=False,docker_build=False,docker_images=False,npm_logs=False,pip=False,thumbnails=False,trash=False)))
+        self.write(config+'rules.json','{"rules":[]}')
+        result=self.invoke('scheduled-run',api=True,uid='1000',fail_directory_sync=True)
+        self.assertNotEqual(result.returncode,0);self.assertIn('receipt directory sync failed',result.stderr)
+        receipt=self.stage/'home/james/.local/state/tend/scheduled-cleanup.json';self.assertIn('running_due',json.loads(receipt.read_text()))
+        self.assertFalse(any(command['program']=='id' for command in self.commands()),'Cleanup execution began before receipt durability was established')
+
+    def test_user_schedule_receipt_supports_an_existing_state_parent_alias(self):
+        config='home/james/.config/tend/'
+        self.write(config+'cleanup-schedule.json',json.dumps(dict(enabled=True,expression='0 0 1 1 *',catch_up=True)))
+        self.write(config+'cleanup.json',json.dumps(dict(apt=False,docker_build=False,docker_images=False,npm_logs=False,pip=False,thumbnails=False,trash=False)))
+        self.write(config+'rules.json','{"rules":[]}')
+        home=self.stage/'home/james';target=home/'receipt-state';target.mkdir()
+        (home/'.local').symlink_to('/home/james/receipt-state',target_is_directory=True)
+        result=self.invoke('scheduled-run',api=True,uid='1000');self.assert_ok(result)
+        receipt=json.loads((target/'state/tend/scheduled-cleanup.json').read_text());self.assertIn('last_due',receipt);self.assertNotIn('running_due',receipt)
 
     def test_update_reboot_override_battery_and_failure(self):
         self.assert_ok(self.invoke('updates'))

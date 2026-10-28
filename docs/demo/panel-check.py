@@ -37,7 +37,7 @@ def register(connection, sender, path, interface, method, parameters, invocation
 conn.register_object('/StatusNotifierWatcher', info.interfaces[0], register,
                      lambda *args: GLib.Variant('b', True) if args[-1] == 'IsStatusNotifierHostRegistered' else GLib.Variant('i', 0), None)
 owner = Gio.bus_own_name_on_connection(conn, 'org.kde.StatusNotifierWatcher', Gio.BusNameOwnerFlags.NONE, None, None)
-child = subprocess.Popen([str(Path('target/debug/tend').resolve())], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+child = subprocess.Popen([str(Path(os.environ.get('TEND_QA_BINARY','target/debug/tend')).resolve())], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 loop = GLib.MainLoop()
 path = Path(os.environ['TEND_PANEL_QA'])
 started = time.monotonic()

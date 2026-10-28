@@ -65,3 +65,79 @@ An isolated dialog or D-Bus protocol check does not establish those integrations
 Daily policy saving additionally requires the separately deployed cleanup-policy
 integration; a disabled Save button is an availability result, not a successful
 save. Record these limits in the delivery report.
+
+## Expansion release gates
+
+Build the `docs-demo` release before measurements. The native drivers accept
+`--binary /absolute/path/to/a/docs-demo-binary`; this never selects the installed
+app. `design-checks.py release` exercises all seventeen pages at narrow/wide
+widths, checks keyboard focus and records three passes of real navigation and
+log-filter callbacks to first painted feedback. The 100 ms target concerns
+feedback, not completion of an animation, scan or external query. Inspect the
+reported `interaction_target_met`; the driver now exits unsuccessfully after
+retaining all artifacts/input checks when that metric is false. Historical runs
+may have exited successfully while reporting a failed JSON gate. The run-context
+also records process niceness and CPU pressure; use normal desktop priority
+for interaction checks, rather than maintenance-job priority.
+
+Use `--variant scale-200`, `large-text` or `high-contrast` with `--theme light`
+or `dark` for native release/health/bundle workflows. The standalone
+`accessibility` mode now captures all seventeen pages across those six variants;
+new dialogs additionally need their native workflow checks and visual review.
+These process-local settings do not change GNOME's saved preferences. Keyboard
+checks are not proof of compatibility with every screen reader.
+
+`docs/demo/run-budget.py` compares prebuilt optimized reference/candidate
+binaries using identical common-page warmup, private panel host and Xvfb/Cairo.
+It measures sixty seconds hidden idle for each, then six hundred seconds enabled
+monitoring, and verifies collection stops afterward. It records binary hashes,
+CPU time, peak RSS, major faults and explicit pass/fail gates. Build both binaries
+before starting; do not compile or run rendering suites during measurement.
+Default monitoring is covered; optional crash-query cost and physical GPU frame
+latency are outside this particular measurement.
+
+```sh
+/usr/bin/python3 docs/demo/run-budget.py \
+  --reference /absolute/path/to/reference-docs-demo \
+  --candidate /absolute/path/to/candidate-docs-demo \
+  --parent ../performance/native-fixtures \
+  --output ../performance/whole-app-budget.json
+```
+
+A short harness smoke run is not a ten-minute budget result. Keep source-only
+checks, sandbox contracts, installed integration and physical desktop behavior
+separate in release reports. See [the expansion ledger](EXPANSION_PLAN.md).
+
+The user installer now performs a read-only compatibility preflight before
+replacing the interface or worker. `test_install_checks.py` verifies all four
+roles, strict capability flags, deadline/error paths and readiness markers.
+The installed legacy helper correctly fails that preflight; this is not proof
+that the new system integration has been installed. The narrow installer dry run
+is separately recorded, and performs no writes or authentication requests.
+
+The release harness also loads 1,000 generated sample journal events through the
+normal decoder, verifies 25-event pagination and bounded native row
+materialization, then checks that a filtered selection opens the correct source
+event. It restores the original sample journal bytes and timestamps. System logs
+now use a native virtualized list, 25-event pages and index selections rather
+than rebuilding hundreds of rows or copying full events on each filter change.
+Typed journal parsing and snapshot exports run on workers; changing a filter
+while exporting cannot overwrite the newer filter status.
+
+Collapsed expander keyboard traversal is checked with GTK criticals fatal.
+Tend keeps the child-visible flag aligned with expansion state: upstream
+[GtkExpander focus handling](https://github.com/GNOME/gtk/blob/main/gtk/gtkexpander.c)
+checks that flag before visiting content, while collapsed content is unparented.
+A retained GDB reproduction identified this path. This is a targeted focus guard,
+not suppression of GTK diagnostics.
+
+The final Task Manager regression switches from process/group views to live
+charts, verifies that hidden process models stay empty during collection, then
+switches back and checks the latest cached process data. Charts no longer cause
+hidden ColumnViews to bind hundreds of rows on every sample.
+
+Static dialog captures use process-local reduced motion to avoid intermediate
+spring/opacity frames under Xvfb. Adjacent JSON records this setting along with
+scale, text DPI, theme, contrast and footer geometry. The capture driver owns a
+separate process group and terminates that group on failure/timeout so a failed
+preview cannot remain consuming CPU. It never signals installed applications.

@@ -138,3 +138,6 @@ pub fn shutdown() {
         }
     });
 }
+
+#[cfg(feature="docs-demo")]
+pub fn budget_stats()->serde_json::Value{DISPATCHER.with(|cell|match cell.borrow().as_ref(){Some(d)=>serde_json::json!({"collections":d.hub.collection_count(),"subscribers":d.entries.borrow().len(),"history_exists":tend::history::path().exists()}),None=>serde_json::json!({"collections":0,"subscribers":0,"history_exists":tend::history::path().exists()})})}

@@ -62,7 +62,7 @@ fn main() -> Result<(), String> {
     std::thread::sleep(Duration::from_secs(17));
     let stopped = count == hub.collection_count();
     hub.shutdown();
-    println!("{}",serde_json::to_string_pretty(&serde_json::json!({"scope":"collector only; not full application budget certification","build":"development",
+    println!("{}",serde_json::to_string_pretty(&serde_json::json!({"scope":"collector only; not full application budget certification","build":if cfg!(debug_assertions){"development"}else{"optimized"},
         "seconds":wall,"samples":samples,"processes_in_single_full_sample":processes,"cpu_percent_one_core":cpu_percent,
         "baseline_rss_bytes":baseline,"peak_rss_bytes":peak,"incremental_rss_bytes":peak.saturating_sub(baseline),
         "idle_collections":idle_collections,"stopped_after_last_consumer":stopped,

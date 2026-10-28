@@ -1,4 +1,12 @@
-# Tend 0.2 implementation
+# Tend implementation history
+
+The sections below record earlier releases and checkpoints. For the current
+twelve-feature expansion, use the [implementation/completion ledger](EXPANSION_PLAN.md),
+[checkpoint evidence](EXPANSION_CHECKPOINT.md), [user workflows](EXPANSION_GUIDE.md)
+and [verification boundaries](TESTING.md). Older counts and operation boundaries
+below do not override those current documents.
+
+## Tend 0.2 implementation
 
 Goal: deliver the approved storage, monitoring, tuning and recovery tools in a lightweight native app. Do not schedule or trigger additional restarts.
 

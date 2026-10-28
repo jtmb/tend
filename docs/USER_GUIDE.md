@@ -2,7 +2,9 @@
 
 **Native Ubuntu storage, monitoring and performance settings.** Written in Rust with GTK 4 and libadwaita.
 
-Scan disk usage, preview cleanup, inspect resource pressure, manage startup entries and adjust supported desktop and memory settings. Open Tend from the launcher or its top-panel icon when you need it. No embedded browser, telemetry or advertising. Closing the window can keep Tend available in the top panel; monitoring pauses in the background. Quit explicitly from the panel menu, header menu or dock action.
+Scan disk usage, preview cleanup, inspect resource pressure, manage startup entries and adjust supported desktop and memory settings. Open Tend from the launcher or its top-panel icon when you need it. No embedded browser, telemetry or advertising. Closing the window can keep Tend available in the top panel; foreground sampling pauses in the background. Optional health monitoring continues only while Tend runs; Quit stops it. Quit explicitly from the panel menu, header menu or dock action.
+
+The [expansion guide](EXPANSION_GUIDE.md) covers diagnostics, app groups, storage history, workspaces, cleanup protection, activity, alerts and portable settings.
 
 ![Tend overview](../assets/overview.png)
 
@@ -22,7 +24,7 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 | **Development tools** | Docker storage/resource reports, local JSON log sizes and limits, pip cache report and npm cache verification. |
 | **Updates & reports** | Pending package list, independent stable-update action, system health, history and text/JSON export. |
 | **Recovery** | Restore saved launcher/startup/animation/service settings and the previous memory configuration. |
-| **Maintenance / Activity / Appearance** | Existing daily maintenance schedule, warning notifications, journal and system/light/dark appearance. |
+| **Maintenance / Activity / Preferences** | Existing daily maintenance schedule, warning notifications, journal and system/light/dark appearance. |
 
 <details>
 <summary>Disk cleanup</summary>
@@ -44,7 +46,7 @@ Scan disk usage, preview cleanup, inspect resource pressure, manage startup entr
 
 **Restore defaults** only edits policy fields; save separately to use them. Category and retention settings have their own commit scope; folder dialogs use **Save rule**. Cleanup preview and **Clean selected…** remain separate operations with stale-preview checks and confirmation.
 
-**Appearance** saves immediately. A write failure restores the previous selection and shows an error. At narrow widths, use the navigation button in the header to open the page list. Technical reports appear after data is collected; empty and loading states explain what to do next.
+Appearance controls under **Preferences** save immediately. A write failure restores the previous selection and shows an error. At narrow widths, use the navigation button in the header to open the page list. Technical reports appear after data is collected; empty and loading states explain what to do next.
 
 ## Task Manager
 
@@ -57,7 +59,7 @@ Performance shows CPU, memory, physical-disk active time and read/write rates, a
 ## Low overhead
 
 - No folder scans, Docker queries or package refreshes at startup.
-- Task Manager samples every two seconds by default **only while its page is selected and Tend is focused**, with pause/1/2/5-second controls. Resource graphs retain 60 samples in memory. Closing or minimizing the window stops sampling. Returning to Tend resumes it.
+- Task Manager samples every two seconds by default **only while its page is selected and Tend is focused**, with pause/1/2/5-second controls. Resource graphs retain 60 samples in memory. Closing or minimizing the window stops foreground Task Manager sampling. Returning to Tend resumes it. Explicit recordings and opt-in health monitoring share the same sampler; see the expansion guide for their lifetimes.
 - Process tables use native GTK list virtualization and sortable columns. Collection runs on a worker thread without overlapping samples. Expensive reports refresh on request. Scans run on a lower-priority worker thread with progress and cancellation.
 - Scans skip symlinks and other filesystems, count allocated blocks once per inode, and report incomplete results if cancelled or their safety limits are reached.
 - Tend uses systemd for existing scheduled maintenance. Optional cleanup cron jobs run the user worker without keeping the UI open. Upgrading Tend does not enable them or change the existing maintenance schedule.
@@ -111,11 +113,11 @@ Open **System logs** and click **Load logs**, or **Last crashed apps** for the p
 
 Dates use readable Toronto times with full timestamp details. Apport rows distinguish report updates from the original reported crash date.
 
-The reader fetches up to 1,000 recent records on demand, displays up to 500 matching rows and has no background polling. Crash detection uses structured systemd coredump events and readable Ubuntu Apport report headers. Crash memory dumps and environment fields are excluded from the displayed/exported Apport headers. Logs are never uploaded, and collection never requests administrator access. Protected/rotated records can be absent; recent crashes is not a complete historical inventory.
+The reader fetches up to 1,000 recent records on demand, shows matching results in 25-event pages and has no background polling. Crash detection uses structured systemd coredump events and readable Ubuntu Apport report headers. Crash memory dumps and environment fields are excluded from the displayed/exported Apport headers. Logs are never uploaded, and collection never requests administrator access. Protected/rotated records can be absent; recent crashes is not a complete historical inventory.
 
 ## Dock behavior
 
-**Appearance → Close to top panel** is enabled by default. When the desktop supports StatusNotifierItem/AppIndicator icons, the title-bar close button hides the window and the panel menu offers **Open Tend** and **Quit Tend**. If the panel host is unavailable, Close minimizes to the dock instead. If the host disappears while Tend is hidden, Tend shows its window so it remains reachable. Sampling stops while hidden, minimized, off-page or unfocused. Dock Quit, Alt+F4 and every **Quit Tend** action exit. Disable Close to top panel to make title-bar Close exit too. No login service or daemon is added; the icon exists while Tend is running.
+**Preferences → Close to top panel** is enabled by default. When the desktop supports StatusNotifierItem/AppIndicator icons, the title-bar close button hides the window and the panel menu offers **Open Tend** and **Quit Tend**. If the panel host is unavailable, Close minimizes to the dock instead. If the host disappears while Tend is hidden, Tend shows its window so it remains reachable. Foreground Task Manager sampling stops while hidden, minimized, off-page or unfocused. Explicit diagnostic recordings and opt-in health monitoring have their own visible controls; Quit stops every collector. Dock Quit, Alt+F4 and every **Quit Tend** action exit. Disable Close to top panel to make title-bar Close exit too. No login service or daemon is added; the icon exists while Tend is running.
 
 ## Tuning and recovery
 
@@ -153,6 +155,8 @@ cd tend
 ```
 
 The build uses one job at a time. Regular installation and updates replace the interface under `~/scripts/tend`, the user cleanup worker under `~/scripts/tend-worker`, the user desktop launcher and the user icon. **They do not invoke sudo or pkexec and do not open password dialogs.** The dock keeps the same application identity. Backups of replaced user files are kept beside them.
+
+The expanded interface/worker installer checks read-only capability reports for the administrator, system worker and both maintenance adapters, plus their readiness markers, before replacing any user files. Upgrade older integration through the separate narrow procedure below first. A mismatch stops with an explanation and opens no authentication dialog.
 
 The trusted system helper must already be installed. If it is missing, the installer stops with an explanation instead of opening an authentication prompt. A first-time administrator setup for the existing maintenance deployment can be performed explicitly with `pkexec /usr/bin/python3 "$PWD/scripts/install.py"`; this is separate from routine interface updates. Helper changes also require an explicit administrator-managed upgrade, and are never automatically attempted by the user installer.
 

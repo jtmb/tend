@@ -5,6 +5,8 @@ Tend preview. It runs the ordinary cleanup preview against isolated sample files
 loads a public sample journal through the production decoder, filters six events
 to two errors, types `editor` to leave one match, and opens that event's details.
 CPU and memory readings are live. Sample data is disclosed in the captions.
+The recording uses process-local reduced motion and the normal 1100×760 window
+to avoid headless frame-clock transitions; it does not change desktop preferences.
 
 The `docs-demo` Cargo feature is excluded from normal builds. It supplies an
 isolated application home and a sample journal input; it does not replace preview
@@ -45,7 +47,8 @@ the total playback time.
 Inspect decoded scenes after every completed action, then review the GIF inside
 the rendered README at desktop and narrow widths. Check for private data,
 clipped controls, readable text and a working loop. The static gallery provides
-a still-image alternative. Capture may take longer than playback on a busy host.
+a still-image alternative. Capture may take longer than playback on a busy host. The recorder runs below
+GTK frame-clock priority so PNG encoding cannot starve allocation or scrolling.
 
 ## Policy editor and design checks
 
@@ -87,9 +90,11 @@ traversal, defaults/discard, failed manual and cron saves, Appearance rollback,
 lossless daily/weekly/custom cron initialization and existing cleanup guards.
 Shared-footer test adapters cover saving, success, failure, invalid and unavailable
 states without a system write. Cron writes are explicitly blocked in this build.
-Accessibility captures cover all four editors at 200% device scale, 135% text size
+Accessibility captures cover all seventeen pages at 200% device scale, 135% text size
 and native high contrast, light and dark. Adjacent JSON records the actual scale,
-DPI, contrast mode and footer visibility. These are process-local settings.
+DPI, contrast mode and footer visibility. These are process-local settings. Static dialog captures additionally disable
+animations in that preview process and wait for a fresh paintable image.
+Animation timing on the physical desktop is a separate check.
 
 The panel check uses a private bus with **no service activation directories**.
 A fake host inspects Tend's real StatusNotifierItem and DBusMenu objects, observes
@@ -114,3 +119,19 @@ collector for ten minutes, then verifies that it settles after demand ends.
 it measures indexing memory and duration, not actual filesystem traversal speed.
 The fixture uses a 2048 MiB history budget and creates no synthetic content files.
 These tools are excluded from normal app builds and installation.
+
+
+## Whole-app release checks
+
+`design-checks.py release --binary target/release/tend` measures native
+navigation and local log-filter feedback, then captures all seventeen pages at
+720 and 1100 pixels with keyboard-focus checks. The JSON records actual device
+scale, text DPI and contrast. Add `--variant scale-200`, `large-text` or
+`high-contrast`, and `--theme light` or `dark`, for process-local variants.
+The same flags work with the health, cleanup, expansion and bundle workflows.
+No installed app, desktop preference or job is changed.
+
+See [Functional verification](../TESTING.md#expansion-release-gates) for the
+optimized whole-app reference comparison and ten-minute monitoring measurement.
+The `budget_probe.rs` and `release_qa.rs` modules are compiled only with
+`docs-demo`; neither is included in installed builds.

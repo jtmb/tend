@@ -5,6 +5,7 @@ import os
 import pwd
 import re
 import shutil
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,16 @@ if not source.is_file() or not (root/'target/release/tend-worker').is_file():
     raise SystemExit('Build first: cargo build --release --locked -j 1 --bin tend --bin tend-worker')
 if not helper.is_file() or not os.access(helper, os.X_OK) or helper.stat().st_uid != 0 or helper.stat().st_mode & 0o022:
     raise SystemExit('The existing trusted Tend helper is required. No authentication prompt was opened.')
+# Refuse a partial upgrade before replacing the user worker used by existing jobs.
+# Capability operations are read-only and never request authentication.
+from install_checks import check_integration
+try:
+    check_integration()
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    raise SystemExit('Matching Tend system integration is required before this interface/worker upgrade. '
+                     'Review scripts/install-policy.py --dry-run, then have its documented narrow update applied. '
+                     'No user files were replaced and no authentication prompt was opened. Details: ' + str(error))
+
 files = {
     home / 'scripts/tend': (source.read_bytes(), 0o755),
     home / 'scripts/tend-worker': ((root/'target/release/tend-worker').read_bytes(), 0o755),

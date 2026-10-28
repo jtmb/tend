@@ -176,6 +176,7 @@ fn ingest(state: &mut State, s: Arc<Snapshot>) {
     state.previous = Some(s);
 }
 struct Ui {
+    tabs: glib::WeakRef<gtk::Stack>,
     groups: Rc<crate::process_tree_ui::Views>,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
@@ -210,25 +211,32 @@ impl Ui {
     fn update(&self, state: &State) {
         self.export.set_sensitive(state.previous.is_some());
         let Some(s) = &state.previous else { return };
-        self.groups.update(s.clone());
-        let selected = self.selection.selected_item().map(|v| {
-            let t = task(&v);
-            (t.pid, t.start)
-        });
-        let values: Vec<_> = s
-            .tasks
-            .iter()
-            .cloned()
-            .map(glib::BoxedAnyObject::new)
-            .collect();
-        self.store.splice(0, self.store.n_items(), &values);
-        if let Some(id) = selected {
-            if let Some(i) = (0..self.sorted.n_items()).find(|i| {
-                let o = self.sorted.item(*i).unwrap();
-                let t = task(&o);
-                (t.pid, t.start) == id
-            }) {
-                self.selection.set_selected(i);
+        let active = self.tabs.upgrade().and_then(|tabs| tabs.visible_child_name());
+        if matches!(active.as_deref(), Some("apps" | "process-tree")) {
+            self.groups.update(s.clone());
+        }
+        // A hidden ColumnView still binds rows after a model splice. Avoid
+        // rebuilding process widgets while only the live charts are visible.
+        if active.as_deref() == Some("processes") {
+            let selected = self.selection.selected_item().map(|v| {
+                let t = task(&v);
+                (t.pid, t.start)
+            });
+            let values: Vec<_> = s
+                .tasks
+                .iter()
+                .cloned()
+                .map(glib::BoxedAnyObject::new)
+                .collect();
+            self.store.splice(0, self.store.n_items(), &values);
+            if let Some(id) = selected {
+                if let Some(i) = (0..self.sorted.n_items()).find(|i| {
+                    let o = self.sorted.item(*i).unwrap();
+                    let t = task(&o);
+                    (t.pid, t.start) == id
+                }) {
+                    self.selection.set_selected(i);
+                }
             }
         }
         self.summary.set_text(&format!(
@@ -554,6 +562,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let state = Rc::new(RefCell::new(State::default()));
     let selected = Rc::new(RefCell::new("cpu".into()));
     let ui = Rc::new(Ui {
+        tabs: tabs.downgrade(),
         groups,
         store,
         selection: selection.clone(),
@@ -573,6 +582,19 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         quit: quit.clone(),
         end: end.clone(),
         export: export.clone(),
+    });
+    let weak_ui = Rc::downgrade(&ui);
+    let tab_state = state.clone();
+    tabs.connect_visible_child_name_notify(move |tabs| {
+        if let Some(ui) = weak_ui.upgrade() {
+            if tabs.visible_child_name().as_deref() != Some("processes") {
+                ui.store.remove_all();
+            }
+            if !matches!(tabs.visible_child_name().as_deref(), Some("apps" | "process-tree")) {
+                ui.groups.clear();
+            }
+            ui.update(&tab_state.borrow());
+        }
     });
     let data = state.clone();
     let key = selected.clone();

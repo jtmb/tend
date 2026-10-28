@@ -13,15 +13,7 @@ fn descendants(root: &impl IsA<Widget>) -> Vec<Widget> {
     }
     result
 }
-fn child_count(root: &impl IsA<Widget>) -> usize {
-    let mut count = 0;
-    let mut child = root.as_ref().first_child();
-    while let Some(widget) = child {
-        count += 1;
-        child = widget.next_sibling();
-    }
-    count
-}
+
 fn action(
     trace: &mut Vec<Value>,
     frame: usize,
@@ -38,7 +30,7 @@ fn action(
             && rect.y() >= 0.
             && rect.x() + rect.width() <= outer.width() as f32
             && rect.y() + rect.height() <= outer.height() as f32,
-        "Off-screen demo target: {name}"
+        "Off-screen demo target: {name}: {rect:?} in {}×{}",outer.width(),outer.height()
     );
     trace.push(json!({"frame":frame,"name":name,
         "x":rect.x()+rect.width()/2.,"y":rect.y()+rect.height()/2.}));
@@ -80,6 +72,16 @@ fn bottom(stack: &gtk::Stack, name: &str) {
     {
         let adjustment = scroll.vadjustment();
         adjustment.set_value(adjustment.upper() - adjustment.page_size());
+    }
+}
+fn scroll_action_into_view(root: &impl IsA<Widget>, name: &str) {
+    let target=button(root,name);
+    if let Some(scroll)=target.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>() {
+        if let Some(bounds)=target.compute_bounds(&scroll) {
+            let adjustment=scroll.vadjustment();
+            eprintln!("Demo scroll {name}: y={} value={} upper={} page={}",bounds.y(),adjustment.value(),adjustment.upper(),adjustment.page_size());
+            adjustment.set_value((adjustment.value()+bounds.y() as f64-32.).max(0.));
+        }
     }
 }
 fn text(root: &impl IsA<Widget>) -> String {
@@ -162,6 +164,25 @@ fn wait_until(test:impl Fn()->bool,timeout:Duration)->bool {
     let started=std::time::Instant::now();
     while !test()&&started.elapsed()<timeout {wait_main_context(Duration::from_millis(50));}test()
 }
+fn log_selection(root:&impl IsA<Widget>)->gtk::SingleSelection{
+    descendants(root).into_iter().find_map(|w|w.downcast::<gtk::ListView>().ok().filter(|v|v.widget_name()=="log-events-view")).unwrap().model().unwrap().downcast::<gtk::SingleSelection>().unwrap()
+}
+/// A new WidgetPaintable may not have an image until a subsequent frame.
+/// Capture actual settled content with a bounded wait, including device scale.
+fn capture_widget(root:&impl IsA<Widget>,path:&Path){
+    // Headless frame clocks can leave spring transitions between states.
+    // Static design captures use process-local reduced motion, never desktop settings.
+    gtk::Settings::default().unwrap().set_property("gtk-enable-animations", false);
+    wait_main_context(Duration::from_millis(1000));
+    let root=root.as_ref();let paint=gtk::WidgetPaintable::new(Some(root));let node=std::cell::RefCell::new(None);root.queue_draw();
+    assert!(wait_until(||{let snapshot=gtk::Snapshot::new();let scale=root.scale_factor() as f32;snapshot.scale(scale,scale);paint.snapshot(&snapshot,root.width() as f64,root.height() as f64);*node.borrow_mut()=snapshot.to_node();node.borrow().is_some()},Duration::from_secs(5)),"Capture never became ready: {}",path.display());
+    root.native().and_then(|n|n.renderer()).expect("Mapped native renderer").render_texture(node.borrow().as_ref().unwrap(),None).save_to_png(path).unwrap();
+    let mut footers=0;
+    for button in descendants(root).into_iter().filter_map(|w|w.downcast::<gtk::Button>().ok()).filter(|b|b.is_mapped()&&matches!(b.label().as_deref(),Some("Save changes"|"Save exclusions"|"Discard changes"))){
+        let b=button.compute_bounds(root).unwrap();assert!(b.x()>=0.&&b.y()>=0.&&b.x()+b.width()<=root.width() as f32&&b.y()+b.height()<=root.height() as f32,"Clipped dialog/page footer in {}",path.display());footers+=1;
+    }
+    let settings=gtk::Settings::default().unwrap();fs::write(path.with_extension("json"),serde_json::to_vec_pretty(&json!({"animations":settings.property::<bool>("gtk-enable-animations"),"settled_wait_ms":1000,"logical_width":root.width(),"logical_height":root.height(),"scale":root.scale_factor(),"text_dpi":settings.property::<i32>("gtk-xft-dpi"),"high_contrast":adw::StyleManager::default().is_high_contrast(),"dark":adw::StyleManager::default().is_dark(),"mapped_footer_actions":footers})).unwrap()).unwrap();
+}
 fn dropdown(stack: &gtk::Stack, tooltip: &str) -> gtk::DropDown {
     descendants(&page(stack, "system-logs"))
         .into_iter()
@@ -208,7 +229,9 @@ pub fn record(
         fs::read_dir(&directory).unwrap().next().is_none(),
         "Use a fresh frame directory"
     );
-    win.set_default_size(1100, 720);
+    win.set_default_size(1100, 760);
+    stack.set_transition_type(gtk::StackTransitionType::None);
+    gtk::Settings::default().unwrap().set_property("gtk-enable-animations", false);
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
     stack.set_visible_child_name("task-manager");
     performance(stack);
@@ -218,7 +241,10 @@ pub fn record(
     let warmup = 128;
     let mut trace = Vec::new();
     let mut evidence = Vec::new();
-    glib::timeout_add_local(Duration::from_millis(125), move || {
+    // Encoding a frame can exceed the interval on a busy dev machine. A
+    // default-priority repeating source would then starve GTK's frame clock,
+    // leaving scrolling and transitions unallocated between captures.
+    glib::timeout_add_local_full(Duration::from_millis(125), glib::Priority::LOW, move || {
         tick += 1;
         if tick % 64 == 0 {
             eprintln!("Demo capture tick {tick}");
@@ -236,7 +262,7 @@ pub fn record(
         match frame {
             0 | 280 => stack.set_visible_child_name("overview"),
             16 => click(&outer, &outer, &mut trace, frame, "Open disk cleanup"),
-            32 => bottom(&stack, "cleanup"),
+            32 => scroll_action_into_view(&page(&stack,"cleanup"), "Preview cleanup"),
             48 => click(
                 &page(&stack, "cleanup"),
                 &outer,
@@ -319,15 +345,8 @@ pub fn record(
                 evidence.push(json!({"frame":frame,"searched":1}));
             }
             248 => {
-                for w in descendants(&page(&stack, "system-logs")) {
-                    if let Some(list) = w.downcast_ref::<gtk::ListBox>() {
-                        if let Some(row) = list.row_at_index(0) {
-                            action(&mut trace, frame, "Inspect event", &row, &outer);
-                            list.select_row(Some(&row));
-                        }
-                    }
-                }
-                bottom(&stack, "system-logs");
+                let logs=page(&stack,"system-logs");let target=descendants(&logs).into_iter().find(|w|w.widget_name()=="log-event-row"&&w.is_mapped()).unwrap();
+                action(&mut trace,frame,"Inspect event",&target,&outer);log_selection(&logs).set_selected(0);bottom(&stack,"system-logs");
             }
             264 => {
                 assert!(text(&page(&stack, "system-logs")).contains("PID: 4100"));
@@ -789,19 +808,13 @@ pub fn qa(
                 // A follow-up tick lets the successful worker completion update the real ListBox.
                 evidence.push(json!({"log_first_load_started":true}));
             } else if step == 3 {
-                let list = descendants(&logs)
-                    .into_iter()
-                    .filter_map(|w| w.downcast::<gtk::ListBox>().ok())
-                    .find(|l| l.selection_mode() == gtk::SelectionMode::Single)
-                    .unwrap();
+                let list=log_selection(&logs);
                 assert_eq!(
-                    child_count(&list),
+                    list.n_items() as usize,
                     6,
                     "Expected six decoded sample journal events"
                 );
-                if let Some(row) = list.row_at_index(0) {
-                    list.select_row(Some(&row));
-                }
+                list.set_selected(0);
                 let detail = descendants(&logs)
                     .into_iter()
                     .filter_map(|w| w.downcast::<gtk::TextView>().ok())
@@ -824,14 +837,14 @@ pub fn qa(
                     "Changing log source left old events exportable"
                 );
                 assert_eq!(
-                    child_count(&list),
+                    list.n_items() as usize,
                     0,
                     "Changing log source left old rows visible"
                 );
                 let period = dropdown(&stack, "Time range");
                 period.set_selected(1);
                 assert!(
-                    child_count(&list) == 0 && !export.is_sensitive(),
+                    list.n_items() as usize == 0 && !export.is_sensitive(),
                     "Changing log time range left old events exportable"
                 );
                 period.set_selected(2);
@@ -841,13 +854,9 @@ pub fn qa(
                 button(&logs, "Load logs").emit_clicked();
                 evidence.push(json!({"log_load_decoded_six_and_selected_details":true,"source_and_period_changes_clear_old_events":true}));
             } else if step == 4 {
-                let list = descendants(&logs)
-                    .into_iter()
-                    .filter_map(|w| w.downcast::<gtk::ListBox>().ok())
-                    .find(|l| l.selection_mode() == gtk::SelectionMode::Single)
-                    .unwrap();
+                let list=log_selection(&logs);
                 assert_eq!(
-                    child_count(&list),
+                    list.n_items() as usize,
                     6,
                     "Reload did not restore sample events"
                 );
@@ -867,18 +876,14 @@ pub fn qa(
                 );
                 evidence.push(json!({"log_failed_reload_started_with_export_disabled":true}));
             } else if step == 5 {
-                let list = descendants(&logs)
-                    .into_iter()
-                    .filter_map(|w| w.downcast::<gtk::ListBox>().ok())
-                    .find(|l| l.selection_mode() == gtk::SelectionMode::Single)
-                    .unwrap();
+                let list=log_selection(&logs);
                 let detail = descendants(&logs)
                     .into_iter()
                     .filter_map(|w| w.downcast::<gtk::TextView>().ok())
                     .next()
                     .unwrap();
                 assert_eq!(
-                    child_count(&list),
+                    list.n_items() as usize,
                     0,
                     "Failed reload left old events visible"
                 );
@@ -903,7 +908,7 @@ pub fn qa(
                     .unwrap()
                     .set_text("error");
                 assert!(
-                    child_count(&list) == 0
+                    list.n_items() as usize == 0
                         && !button(&logs, "Export filtered logs").is_sensitive(),
                     "Filters repopulated stale events after failed reload"
                 );
@@ -923,7 +928,10 @@ pub fn qa(
                 .unwrap();
                 evidence.push(json!({"failed_reload_cleared_rows_details_and_export_even_after_filtering":true}));
             } else if step == 6 {
-                let activity = page(&stack, "activity");
+                // The generic text/JSON report utility lives in Storage.
+                // Activity is now a structured timeline with separate tests.
+                let activity = page(&stack, "storage");
+                stack.set_visible_child_name("storage");
                 let report = descendants(&activity)
                     .into_iter()
                     .filter_map(|w| w.downcast::<gtk::TextView>().ok())
@@ -1819,8 +1827,7 @@ pub fn activity_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk:
         stack.set_visible_child_name("activity");read();assert_eq!(model.n_items(),200);model.select_item(0,true);
         for width in [720,1100] {
             win.set_default_size(width,820);wait_main_context(Duration::from_millis(250));
-            let paint=gtk::WidgetPaintable::new(Some(&outer));let snapshot=gtk::Snapshot::new();paint.snapshot(&snapshot,outer.width() as f64,outer.height() as f64);
-            win.renderer().unwrap().render_texture(&snapshot.to_node().unwrap(),None).save_to_png(directory.join(format!("activity-{width}.png"))).unwrap();
+            capture_widget(&outer,&directory.join(format!("activity-{width}.png")));
         }
         search.set_text(&"x".repeat(241));wait_main_context(Duration::from_millis(300));read();assert_eq!(model.n_items(),0);assert!(text(&activity).contains("Invalid activity filters"));
         fs::rename(&journal,home.join("retained-fixture-crash.jsonl")).unwrap();fs::rename(&retained,&journal).unwrap();
@@ -1992,16 +1999,7 @@ pub fn cleanup_qa(
         button(&window, "Discard changes").emit_clicked();
         assert_eq!(rows(&list), 1);
         assert_eq!(fs::read(config.join("exclusions.json")).unwrap(), bytes);
-        let paint = gtk::WidgetPaintable::new(Some(&window));
-        wait_main_context(Duration::from_millis(200));
-        let snapshot = gtk::Snapshot::new();
-        paint.snapshot(&snapshot, window.width() as f64, window.height() as f64);
-        window
-            .renderer()
-            .unwrap()
-            .render_texture(&snapshot.to_node().unwrap(), None)
-            .save_to_png(directory.join("exclusions.png"))
-            .unwrap();
+        capture_widget(&window,&directory.join("exclusions.png"));
         window.close();
         drop(window);
         drop(dialog);
@@ -2034,14 +2032,7 @@ pub fn cleanup_qa(
         for width in [720, 1100] {
             win.set_default_size(width, 820);
             wait_main_context(Duration::from_millis(200));
-            let paint = gtk::WidgetPaintable::new(Some(&outer));
-            let snapshot = gtk::Snapshot::new();
-            paint.snapshot(&snapshot, outer.width() as f64, outer.height() as f64);
-            win.renderer()
-                .unwrap()
-                .render_texture(&snapshot.to_node().unwrap(), None)
-                .save_to_png(directory.join(format!("cleanup-{width}.png")))
-                .unwrap();
+            capture_widget(&outer,&directory.join(format!("cleanup-{width}.png")));
         }
         fs::write(directory.join("cleanup-evidence.json"),serde_json::to_vec_pretty(&json!({
             "real_preview_filters_protected_file":true,"why_and_effect_details":true,"all_206_candidates_paged":true,
@@ -2094,8 +2085,7 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         button(&workspace,"Load last scan").emit_clicked();assert!(wait_until(||text(&workspace).contains("Recorded scan for QA workspace"),Duration::from_secs(15)));
         for width in [720,1100] {
             win.set_default_size(width,760);wait_main_context(Duration::from_millis(250));
-            let paint=gtk::WidgetPaintable::new(Some(&outer));let snapshot=gtk::Snapshot::new();paint.snapshot(&snapshot,outer.width() as f64,outer.height() as f64);
-            let texture=win.renderer().unwrap().render_texture(&snapshot.to_node().unwrap(),None);texture.save_to_png(directory.join(format!("workspaces-{width}.png"))).unwrap();
+            capture_widget(&outer,&directory.join(format!("workspaces-{width}.png")));
         }
         button(&workspace,"Inspect project storage").emit_clicked();assert_eq!(stack.visible_child_name().as_deref(),Some("storage"));assert_eq!(entry.text().as_str(),fixture.to_string_lossy());stack.set_visible_child_name("workspaces");
         button(&workspace,"Edit selected").emit_clicked();entry_row("Project name").set_text("Unsaved renamed project");button(&workspace,"Update project draft").emit_clicked();assert!(wait_until(||text(&workspace).contains("Project draft updated"),Duration::from_secs(15)));
@@ -2131,6 +2121,18 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
             assert!(linked,"No process details link in {name}");
             evidence.push(json!({"view":name,"rows":original,"expanded":expanded,"search":true,"user_filter":true,"process_link":true}));
         }
+        // Charts must not rebuild hidden process tables on each live sample.
+        tabs.set_visible_child_name("performance");
+        assert_eq!(process.model().unwrap().n_items(),0);
+        refresh(&stack);wait_main_context(Duration::from_millis(2500));
+        assert_eq!(process.model().unwrap().n_items(),0,"Hidden process table was rebuilt while charting");
+        for name in ["apps","process-tree"]{
+            let table=descendants(&tabs.child_by_name(name).unwrap()).into_iter().find_map(|w|w.downcast::<gtk::ColumnView>().ok()).unwrap();
+            assert_eq!(table.model().unwrap().n_items(),0,"Hidden group model was retained while charting");
+        }
+        tabs.set_visible_child_name("processes");
+        assert!(process.model().unwrap().n_items()>0,"Switching back did not populate cached process data");
+        evidence.push(json!({"performance_skips_hidden_process_models":true,"return_to_processes_uses_latest_snapshot":true}));
         stack.set_visible_child_name("diagnostics");let diag=page(&stack,"diagnostics");
         assert!(!button(&diag,"Finish recording").is_sensitive());assert!(!button(&diag,"Save recording").is_sensitive());
         button(&diag,"Load saved recordings").emit_clicked();wait_main_context(Duration::from_millis(500));assert!(text(&diag).contains("No saved recordings"));
@@ -2152,9 +2154,7 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         evidence.push(json!({"comparison_short_run_warning":true,"cancel_kept_history_unchanged":true,"sessions":sessions.len()}));
         for width in [720,1100] {
             win.set_default_size(width,760);wait_main_context(Duration::from_millis(250));
-            let paint=gtk::WidgetPaintable::new(Some(&outer));let snapshot=gtk::Snapshot::new();paint.snapshot(&snapshot,outer.width() as f64,outer.height() as f64);
-            let node=snapshot.to_node().unwrap();let renderer=win.renderer().unwrap();let texture=renderer.render_texture(&node,None);
-            texture.save_to_png(directory.join(format!("diagnostics-{width}.png"))).unwrap();
+            capture_widget(&outer,&directory.join(format!("diagnostics-{width}.png")));
         }
         fs::write(directory.join("expansion-evidence.json"),serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
         app.activate_action("quit",None);
@@ -2179,8 +2179,8 @@ pub fn health_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         enabled.set_active(true);named(&widget,"monitor-hold").downcast::<gtk::SpinButton>().unwrap().set_value(30.);named(&widget,"monitor-cooldown").downcast::<gtk::SpinButton>().unwrap().set_value(60.);
         button(&widget,"Save changes").emit_clicked();assert!(wait_until(||tend::health::Settings::read().is_ok_and(|s|s.enabled)&&crate::health_ui::enabled(),Duration::from_secs(6)));
         wait_main_context(Duration::from_millis(300));assert!(!button(&widget,"Save changes").is_sensitive());
-        for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(500));let paint=gtk::WidgetPaintable::new(Some(&win));let shot=gtk::Snapshot::new();paint.snapshot(&shot,win.width() as f64,win.height() as f64);win.renderer().unwrap().render_texture(&shot.to_node().unwrap(),None).save_to_png(directory.join(format!("monitoring-{width}.png"))).unwrap();}
-        let weak_save=button(&widget,"Save changes").downgrade();dialog.close();drop(widget);drop(dialog);drop(enabled);wait_main_context(Duration::from_millis(400));assert!(weak_save.upgrade().is_none(),"Closed monitoring editor retains its signal graph");
+        for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(500));capture_widget(&win,&directory.join(format!("monitoring-{width}.png")));}
+        let weak_save=button(&widget,"Save changes").downgrade();dialog.close();drop(widget);drop(dialog);drop(enabled);wait_main_context(Duration::from_millis(400));assert!(wait_until(||weak_save.upgrade().is_none(),Duration::from_secs(3)),"Closed monitoring editor retains its signal graph after closing settled");
         for target in ["diagnostics","system-logs","activity","storage"]{app.activate_action(&format!("open-{target}"),None);assert_eq!(stack.visible_child_name().as_deref(),Some(target));}
         stack.set_visible_child_name("care");
         let close=descendants(&outer).into_iter().find(|w|w.widget_name()=="window-close").unwrap().downcast::<gtk::Button>().unwrap();close.emit_clicked();assert!(!win.is_visible(),"Preview panel did not receive the close");
@@ -2200,8 +2200,12 @@ pub fn health_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         assert!(wait_until(||notifications().len()==4,Duration::from_secs(6)));assert_eq!(notifications()[3]["title"],"Recent application crashes");crate::health_ui::qa_crashes(&app);wait_main_context(Duration::from_millis(400));assert_eq!(notifications().len(),4);fs::rename(&journal,directory.join("fixture-crash-journal.jsonl")).unwrap();fs::rename(original,&journal).unwrap();
         named(&widget,"monitor-enabled").downcast::<gtk::Switch>().unwrap().set_active(false);button(&widget,"Save changes").emit_clicked();assert!(wait_until(||!crate::health_ui::enabled(),Duration::from_secs(6)));let count=notifications().len();crate::health_ui::qa_observe(&app,100.,start+1000000);wait_main_context(Duration::from_millis(300));assert_eq!(notifications().len(),count);assert_eq!(crate::health_ui::summary(),"Monitoring off");
         dialog.close();drop(widget);drop(dialog);drop(crashes);
-        let events=tend::activity::load(&tend::activity::Query{source:2,category:3,..Default::default()},None).unwrap();assert_eq!(events.events.len(),3,"Alert history is missing: {:?}",events.warnings);
-        fs::write(directory.join("health-evidence.json"),serde_json::to_vec_pretty(&json!({"native_save_discard":true,"history_limits_native":true,"closed_editor_released":true,"hidden_monitor_delivery":true,"warning_repeat_recovery":true,"snooze_resume":true,"optional_crash_query_deduplicated":true,"disabled_no_delivery":true,"panel_shortcuts":true,"bounded_alert_history":events.events.len(),"notifications":notifications().len(),"fixture_only":true})).unwrap()).unwrap();
+        let query=tend::activity::Query{source:2,category:3,..Default::default()};
+        assert!(wait_until(||tend::activity::load(&query,None).is_ok_and(|events|events.events.len()==4),Duration::from_secs(6)),"Alert history is missing");
+        crate::health_ui::qa_audit_burst();
+        assert!(wait_until(||tend::activity::load(&query,None).is_ok_and(|events|events.events.len()==7),Duration::from_secs(6)),"Bounded alert backlog did not drain");
+        let events=tend::activity::load(&query,None).unwrap();
+        fs::write(directory.join("health-evidence.json"),serde_json::to_vec_pretty(&json!({"native_save_discard":true,"history_limits_native":true,"closed_editor_released":true,"hidden_monitor_delivery":true,"warning_repeat_recovery":true,"snooze_resume":true,"optional_crash_query_deduplicated":true,"disabled_no_delivery":true,"panel_shortcuts":true,"bounded_alert_history":events.events.len(),"queued_audit_burst":3,"notifications":notifications().len(),"fixture_only":true})).unwrap()).unwrap();
         app.quit();
     });
 }
@@ -2214,8 +2218,8 @@ fn history_limits_qa(win:&adw::ApplicationWindow,stack:&gtk::Stack,directory:&Pa
     budget.set_value(256.);retention.set_value(14.);button(&widget,"Discard changes").emit_clicked();assert_eq!(budget.value_as_int(),512);assert_eq!(retention.value_as_int(),30);
     budget.set_value(128.);retention.set_value(45.);button(&widget,"Save changes").emit_clicked();budget.set_value(192.);
     assert!(wait_until(||tend::history::Settings::read().is_ok_and(|s|s.max_mib==128&&s.retention_days==45)&&button(&widget,"Save changes").is_sensitive(),Duration::from_secs(6)));assert!(text(&widget).contains("Unsaved changes"));button(&widget,"Discard changes").emit_clicked();assert_eq!(budget.value_as_int(),128);
-    for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(400));let paint=gtk::WidgetPaintable::new(Some(win));let shot=gtk::Snapshot::new();paint.snapshot(&shot,win.width() as f64,win.height() as f64);win.renderer().unwrap().render_texture(&shot.to_node().unwrap(),None).save_to_png(directory.join(format!("history-limits-{width}.png"))).unwrap();}
-    let weak=button(&widget,"Save changes").downgrade();dialog.close();drop(widget);drop(dialog);drop(budget);drop(retention);wait_main_context(Duration::from_millis(350));assert!(weak.upgrade().is_none());
+    for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(400));capture_widget(win,&directory.join(format!("history-limits-{width}.png")));}
+    let weak=button(&widget,"Save changes").downgrade();dialog.close();drop(widget);drop(dialog);drop(budget);drop(retention);wait_main_context(Duration::from_millis(350));assert!(wait_until(||weak.upgrade().is_none(),Duration::from_secs(3)));
     for target in ["storage","activity"]{stack.set_visible_child_name(target);button(&page(stack,target),"History limits").emit_clicked();wait_main_context(Duration::from_millis(250));let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();assert_eq!(find(&widget,"history-budget").value_as_int(),128);assert_eq!(find(&widget,"history-retention").value_as_int(),45);assert!(!button(&widget,"Save changes").is_sensitive());dialog.close();drop(widget);drop(dialog);wait_main_context(Duration::from_millis(300));}
     let path=tend::workstation::home().join(".config/tend/history.json");let saved=path.with_extension("qa-saved");fs::rename(&path,&saved).unwrap();tend::workstation::private_write(&path,"{bad fixture").unwrap();
     button(&page(stack,"activity"),"History limits").emit_clicked();wait_main_context(Duration::from_millis(300));let dialog=win.visible_dialog().unwrap();let widget=dialog.clone().upcast::<gtk::Widget>();assert!(text(&widget).contains("Saved history limits could not be read"));assert_eq!(find(&widget,"history-budget").value_as_int(),512);dialog.close();drop(widget);drop(dialog);wait_main_context(Duration::from_millis(300));assert_eq!(fs::read(&path).unwrap(),b"{bad fixture");fs::rename(&path,directory.join("invalid-history-settings.json")).unwrap();fs::rename(saved,path).unwrap();
@@ -2233,7 +2237,7 @@ pub fn bundle_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         let close=|dialog:adw::Dialog|{dialog.close();drop(dialog);wait_main_context(Duration::from_millis(350));};
         stack.set_visible_child_name("care");let care=page(&stack,"care");crate::settings_ui::qa_cancel();button(&care,"Export settings").emit_clicked();assert!(wait_until(||button(&care,"Export settings").is_sensitive(),Duration::from_secs(3)));let export=directory.join("exported.tend.json");crate::settings_ui::qa_pick(export.clone());button(&care,"Export settings").emit_clicked();assert!(wait_until(||export.is_file()&&button(&care,"Export settings").is_sensitive(),Duration::from_secs(10)));let mut bundle=Bundle::read(&export).unwrap();assert_eq!(bundle.sections.len(),10);assert_eq!(fs::metadata(&export).unwrap().permissions().mode()&0o777,0o600);
         let encoded=bundle.encode().unwrap();assert!(!encoded.contains("reboot"));assert!(!encoded.contains("password"));assert!(!encoded.contains("login"));
-        bundle.sections.get_mut(&Section::Appearance).unwrap()["theme"]=json!(2);bundle.sections.get_mut(&Section::Monitoring).unwrap()["enabled"]=json!(true);bundle.sections.get_mut(&Section::Monitoring).unwrap()["hold_seconds"]=json!(120);bundle.sections.get_mut(&Section::History).unwrap()["max_mib"]=json!(256);bundle.sections.get_mut(&Section::History).unwrap()["retention_days"]=json!(14);
+        bundle.sections.get_mut(&Section::Appearance).unwrap()["theme"]=json!(std::env::var("TEND_QA_THEME_ID").ok().and_then(|s|s.parse::<u8>().ok()).filter(|v|[1,2].contains(v)).unwrap_or(2));bundle.sections.get_mut(&Section::Appearance).unwrap()["close_to_panel"]=json!(false);bundle.sections.get_mut(&Section::Monitoring).unwrap()["enabled"]=json!(true);bundle.sections.get_mut(&Section::Monitoring).unwrap()["hold_seconds"]=json!(120);bundle.sections.get_mut(&Section::History).unwrap()["max_mib"]=json!(256);bundle.sections.get_mut(&Section::History).unwrap()["retention_days"]=json!(14);
         bundle.sections.insert(Section::Workspaces,json!({"version":1,"projects":[{"id":"fixture-project","name":"Imported project","root":home.join("sample-cache")}]}));bundle.sections.get_mut(&Section::ManualCleanup).unwrap()["age_days"]=json!(45);bundle.sections.get_mut(&Section::DailyCleanup).unwrap()["build_days"]=json!(28);
         bundle.sections.insert(Section::FolderRules,json!({"rules":[{"name":"Imported cache","folder":home.join("sample-cache"),"pattern":"*.cache","days":21,"recursive":false,"enabled":true}]}));bundle.sections.insert(Section::UserSchedule,json!({"enabled":true,"expression":"5 9 * * 1-5","catch_up":true}));bundle.sections.get_mut(&Section::Maintenance).unwrap()["hour"]=json!(9);
         bundle.sections.insert(Section::Exclusions,json!({"paths":(0..64).map(|i|json!({"path":home.join(format!("keep-{i:02}")),"note":format!("Fixture protected path {i}"),"enabled":true})).collect::<Vec<_>>()}));
@@ -2241,13 +2245,14 @@ pub fn bundle_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         crate::settings_ui::qa_pick(input);button(&care,"Import settings").emit_clicked();let dialog=modal("Import settings");let widget=dialog.clone().upcast::<gtk::Widget>();assert!(!button(&widget,"Review selected section").is_sensitive());button(&widget,"Load as inactive drafts").emit_clicked();assert!(wait_until(||tend::settings_bundle::draft_path().is_file()&&button(&widget,"Review selected section").is_sensitive(),Duration::from_secs(10)));let drafts=Bundle::read_drafts().unwrap().unwrap();for section in [Section::Monitoring,Section::UserSchedule,Section::Maintenance]{assert_eq!(drafts.sections[&section]["enabled"],false);}assert_eq!(drafts.sections[&Section::FolderRules]["rules"][0]["enabled"],false);for(s,value)in &before{assert_eq!(&s.current().unwrap(),value,"Loading drafts changed {}",s.title());}
         // Full comparison paging includes every protected-path field.
         let choose=named(&widget,"bundle-section").downcast::<gtk::DropDown>().unwrap();choose.set_selected(9);assert!(button(&widget,"Next changes").is_sensitive());let mut pages=1;while button(&widget,"Next changes").is_sensitive(){button(&widget,"Next changes").emit_clicked();pages+=1;assert!(pages<=5);}assert_eq!(pages,4);button(&widget,"Previous changes").emit_clicked();assert!(button(&widget,"Next changes").is_sensitive());
-        for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(400));let paint=gtk::WidgetPaintable::new(Some(&win));let shot=gtk::Snapshot::new();paint.snapshot(&shot,win.width() as f64,win.height() as f64);win.renderer().unwrap().render_texture(&shot.to_node().unwrap(),None).save_to_png(directory.join(format!("settings-import-{width}.png"))).unwrap();}
+        for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(400));capture_widget(&win,&directory.join(format!("settings-import-{width}.png")));}
         drop(widget);drop(choose);close(dialog);
         // An existing page draft cannot be overwritten by an imported review.
         let manual=page(&stack,"cleanup");let spins=descendants(&manual).into_iter().filter_map(|w|w.downcast::<gtk::SpinButton>().ok()).collect::<Vec<_>>();spins[0].set_value(75.);button(&care,"Review imported drafts").emit_clicked();let dialog=modal("Import settings");let widget=dialog.clone().upcast::<gtk::Widget>();named(&widget,"bundle-section").downcast::<gtk::DropDown>().unwrap().set_selected(4);button(&widget,"Review selected section").emit_clicked();wait_main_context(Duration::from_millis(300));assert!(text(&widget).contains("existing unsaved changes"));assert_eq!(spins[0].value_as_int(),75);drop(widget);close(dialog);button(&manual,"Discard changes").emit_clicked();
         let mut checked=vec![];
         for section in Section::ALL{
             button(&care,"Review imported drafts").emit_clicked();let comparison=modal("Import settings");let widget=comparison.clone().upcast::<gtk::Widget>();let index=Section::ALL.into_iter().position(|s|s==section).unwrap();named(&widget,"bundle-section").downcast::<gtk::DropDown>().unwrap().set_selected(index as u32);button(&widget,"Review selected section").emit_clicked();drop(widget);drop(comparison);let dialog=modal(section.title());let widget=dialog.clone().upcast::<gtk::Widget>();let save=button(&widget,"Save changes");
+            for width in [720,1100]{win.set_default_size(width,760);wait_main_context(Duration::from_millis(100));capture_widget(&win,&directory.join(format!("review-{index}-{width}.png")));}
             if matches!(section,Section::DailyCleanup|Section::Maintenance|Section::Exclusions){assert!(!save.is_sensitive(),"Root save must be blocked in preview");assert!(text(&widget).contains("System saves are disabled"));}
             else if section==Section::UserSchedule{let entry=named(&widget,"bundle-expression").downcast::<adw::EntryRow>().unwrap();entry.set_text("not a cron expression");assert!(!save.is_sensitive());entry.set_text("5 9 * * 1-5");save.emit_clicked();assert!(wait_until(||text(&widget).contains("Changes were not saved"),Duration::from_secs(5)));for e in descendants(&widget).into_iter().filter_map(|w|w.downcast::<gtk::Expander>().ok()).filter(|e|e.label().as_deref()==Some("Details")){e.set_expanded(true);}wait_main_context(Duration::from_millis(150));assert!(text(&widget).contains("Cron writes are disabled"),"{}",text(&widget));assert_eq!(section.current().unwrap(),before[&section]);}
             else{
@@ -2261,7 +2266,7 @@ pub fn bundle_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
                 if section==Section::FolderRules{assert!(!named(&widget,"bundle-rules-0-enabled").downcast::<gtk::Switch>().unwrap().is_active());}
                 assert!(save.is_sensitive(),"No Save for {}",section.title());save.emit_clicked();assert!(wait_until(||text(&widget).contains("Saved · no unsaved changes"),Duration::from_secs(8)),"Save did not finish: {}",text(&widget));assert_eq!(section.current().unwrap(),drafts.sections[&section]);
             }
-            let weak=save.downgrade();drop(save);drop(widget);close(dialog);assert!(weak.upgrade().is_none(),"Review retained its Save widget: {}",section.title());checked.push(section.title());
+            let weak=save.downgrade();drop(save);drop(widget);close(dialog);assert!(wait_until(||weak.upgrade().is_none(),Duration::from_secs(3)),"Review retained its Save widget after closing settled: {}",section.title());checked.push(section.title());
         }
         assert_eq!(checked.len(),10);assert_eq!(spins[0].value_as_int(),45,"Existing manual editor was not refreshed");
         // Closing an in-flight review and leaving Preferences both invalidate

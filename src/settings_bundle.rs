@@ -164,31 +164,9 @@ impl Section {
             (p.into(), 0)
         }
         let v = match self {
-            Self::Appearance => {
-                let p = gtk::glib::user_config_dir().join("tend");
-                let theme = match config_io::read(&p.join("theme"), 64, Some(uid), false)? {
-                    None => 0,
-                    Some(b) => std::str::from_utf8(&b)
-                        .map_err(|e| e.to_string())?
-                        .trim()
-                        .parse::<u8>()
-                        .map_err(|_| "Invalid saved color scheme")?,
-                };
-                let close_to_panel =
-                    match config_io::read(&p.join("background"), 64, Some(uid), false)? {
-                        None => true,
-                        Some(b) => match std::str::from_utf8(&b).map_err(|e| e.to_string())?.trim()
-                        {
-                            "true" => true,
-                            "false" => false,
-                            _ => return Err("Invalid saved window behavior.".into()),
-                        },
-                    };
-                json(Appearance {
-                    theme,
-                    close_to_panel,
-                })?
-            }
+            Self::Appearance => json(Appearance::read_at(
+                &gtk::glib::user_config_dir().join("tend"),
+            )?)?,
             Self::Monitoring => json(health::Settings::read()?)?,
             Self::History => json(history::Settings::read()?)?,
             Self::Workspaces => {
@@ -238,7 +216,91 @@ impl Appearance {
             Ok(())
         }
     }
+    fn read_at(root: &Path) -> Result<Self, String> {
+        let uid = unsafe { libc::geteuid() };
+        let theme = match config_io::read(&root.join("theme"), 64, Some(uid), false)? {
+            None => 0,
+            Some(b) => std::str::from_utf8(&b)
+                .map_err(|e| e.to_string())?
+                .trim()
+                .parse::<u8>()
+                .map_err(|_| "Invalid saved color scheme")?,
+        };
+        let close_to_panel = match config_io::read(&root.join("background"), 64, Some(uid), false)?
+        {
+            None => true,
+            Some(b) => match std::str::from_utf8(&b).map_err(|e| e.to_string())?.trim() {
+                "true" => true,
+                "false" => false,
+                _ => return Err("Invalid saved window behavior.".into()),
+            },
+        };
+        let value = Self {
+            theme,
+            close_to_panel,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+    pub fn save_checked(&self, expected: &Self) -> Result<(), String> {
+        self.save_at_with(
+            &gtk::glib::user_config_dir().join("tend"),
+            expected,
+            |path, value| match value {
+                Some(text) => w::private_write(path, text),
+                None => match std::fs::remove_file(path) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(e.to_string()),
+                },
+            },
+        )
+    }
+    fn save_at_with(
+        &self,
+        root: &Path,
+        expected: &Self,
+        mut write: impl FnMut(&Path, Option<&str>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.validate()?;
+        let _guard = config_io::lock(&root.join("appearance.json"))?;
+        if Self::read_at(root)? != *expected {
+            return Err("Saved appearance changed. Review again before saving.".into());
+        }
+        let paths = [root.join("theme"), root.join("background")];
+        let uid = unsafe { libc::geteuid() };
+        let originals = paths
+            .iter()
+            .map(|p| {
+                config_io::read(p, 64, Some(uid), false).and_then(|b| {
+                    b.map(String::from_utf8)
+                        .transpose()
+                        .map_err(|e| e.to_string())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let values = [self.theme.to_string(), self.close_to_panel.to_string()];
+        for (index, (path, value)) in paths.iter().zip(&values).enumerate() {
+            if let Err(error) = write(path, Some(value)) {
+                let mut rollback = vec![];
+                for i in 0..=index {
+                    if let Err(e) = write(&paths[i], originals[i].as_deref()) {
+                        rollback.push(e);
+                    }
+                }
+                return if rollback.is_empty() {
+                    Err(format!(
+                        "Appearance was not saved. Previous preferences restored: {error}"
+                    ))
+                } else {
+                    Err(format!("Some appearance preferences changed; rollback was incomplete. Reopen this review after fixing the storage error. Save: {error}; restore: {}",rollback.join("; ")))
+                };
+            }
+        }
+        Ok(())
+    }
 }
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Maintenance {
@@ -479,6 +541,53 @@ pub fn comparison(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn appearance_pair_failure_restores_bytes_and_reports_failed_rollback() {
+        let root = PathBuf::from("/tmp/opencode").join(format!(
+            "tend-appearance-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let before = Appearance {
+            theme: 1,
+            close_to_panel: true,
+        };
+        let next = Appearance {
+            theme: 2,
+            close_to_panel: false,
+        };
+        w::private_write(&root.join("theme"), "1\n").unwrap();
+        w::private_write(&root.join("background"), "true\n").unwrap();
+        let mut calls = 0;
+        let error = next
+            .save_at_with(&root, &before, |p, value| {
+                calls += 1;
+                if calls == 2 {
+                    return Err("controlled second write failure".into());
+                }
+                w::private_write(p, value.unwrap())
+            })
+            .unwrap_err();
+        assert!(error.contains("Previous preferences restored"));
+        assert_eq!(std::fs::read(root.join("theme")).unwrap(), b"1\n");
+        assert_eq!(std::fs::read(root.join("background")).unwrap(), b"true\n");
+        let mut calls = 0;
+        let error = next
+            .save_at_with(&root, &before, |p, value| {
+                calls += 1;
+                if calls == 2 || calls == 3 {
+                    return Err("controlled storage failure".into());
+                }
+                w::private_write(p, value.unwrap())
+            })
+            .unwrap_err();
+        assert!(error.contains("Some appearance preferences changed"));
+        assert_eq!(Appearance::read_at(&root).unwrap().theme, 2);
+    }
     #[test]
     fn imports_are_typed_inactive_and_do_not_activate_settings() {
         let mut b = Bundle::empty();

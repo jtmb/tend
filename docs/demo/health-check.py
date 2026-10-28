@@ -38,7 +38,7 @@ def notify(connection,sender,path,interface,method,parameters,invocation):
 conn.register_object('/StatusNotifierWatcher',watcher.interfaces[0],register,lambda *args:GLib.Variant('b',True) if args[-1]=='IsStatusNotifierHostRegistered' else GLib.Variant('i',0),None)
 conn.register_object('/org/freedesktop/Notifications',notification.interfaces[0],notify,None,None)
 owners=[Gio.bus_own_name_on_connection(conn,name,Gio.BusNameOwnerFlags.NONE,None,None) for name in ['org.kde.StatusNotifierWatcher','org.freedesktop.Notifications']]
-child=subprocess.Popen([str(Path('target/debug/tend').resolve())],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+child=subprocess.Popen([str(Path(os.environ.get('TEND_QA_BINARY','target/debug/tend')).resolve())],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 loop=GLib.MainLoop();started=time.monotonic();failure=None;live_status=False
 
 def tick():

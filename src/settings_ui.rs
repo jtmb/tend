@@ -77,7 +77,12 @@ fn named(path: &[Key]) -> String {
     let key = words.last().copied().unwrap_or("Setting");
     let name = match key {
         "enabled" => "Enabled",
-        "threshold" => "Threshold",
+        "threshold" => match words.first().copied().unwrap_or("") {
+            "memory" => "Alert below (% available)",
+            "disk" => "Alert below (GiB free)",
+            "cpu" => "Alert at or above (% CPU)",
+            _ => "Alert at or above (% time stalled)",
+        },
         "cpu" => "CPU use",
         "memory" => "Available memory",
         "disk" => "Root free space",
@@ -519,15 +524,12 @@ fn apply(section: Section, value: &Value, expected: &Value) -> Result<(), String
         return Err("Saved settings changed while this review was open. Close it and review again; nothing was saved.".into());
     }
     match section {
-        Section::Appearance => {
-            let s: Appearance = serde_json::from_value(value).map_err(|e| e.to_string())?;
-            let path = glib::user_config_dir().join("tend");
-            w::private_write(&path.join("theme"), &s.theme.to_string())?;
-            w::private_write(
-                &path.join("background"),
-                if s.close_to_panel { "true" } else { "false" },
-            )
-        }
+        Section::Appearance => serde_json::from_value::<Appearance>(value)
+            .map_err(|e| e.to_string())?
+            .save_checked(
+                &serde_json::from_value::<Appearance>(expected.clone())
+                    .map_err(|e| e.to_string())?,
+            ),
         Section::Monitoring
         | Section::History
         | Section::Workspaces
@@ -668,7 +670,7 @@ fn review(
                             }
                         }
                     }
-                    Err(e) => f.error(&e),
+                    Err(e) => {f.error(&e);if section==Section::Appearance&&e.starts_with("Some appearance preferences changed"){f.notice.show("Appearance was partly changed. Review the saved values before retrying.",Some(&e),true);}},
                 }
             },
         );
