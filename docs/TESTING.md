@@ -6,9 +6,17 @@ constrained administrator helper. It has no HTTP server or web API.
 
 ## Safe local checks
 
+On a memory-constrained shared desktop, use the build guard. It previews by
+default; `--run` creates a temporary user scope with 768 MiB memory high,
+1 GiB memory maximum and 256 MiB swap maximum. It uses one Cargo job, defers
+when RAM headroom is low or a large Node job is present, and interrupts only
+its owned build when pressure rises. It installs no unit or timer and does
+not modify other applications. A deferred build exits 75 and is not a pass.
+
 ```sh
-cargo test --locked -j 1 --all-targets
-cargo build --locked -j 1 --features docs-demo --bins --example qa-api
+python3 scripts/limited-build.py -- cargo test --locked -j 1 --all-targets
+python3 scripts/limited-build.py --run -- cargo test --locked -j 1 --all-targets
+python3 scripts/limited-build.py --run -- cargo build --locked -j 1 --features docs-demo --bins --example qa-api
 python3 -m unittest discover -s tests -v
 TEND_QA_FEATURES=1 python3 docs/demo/design-checks.py matrix
 python3 docs/demo/design-checks.py matrix
@@ -23,8 +31,9 @@ settings remain untouched. See [recording and design checks](demo/README.md)
 for prerequisites and fixture details. Screenshots may contain local process
 names from read-only performance sampling; review before publishing.
 
-The memory-failure case is an anonymized **recorded** Node kernel OOM, not a
-recreated exhaustion workload. Parser contracts cover page/KiB units, missing
+The memory-failure cases are anonymized **recorded** Node kernel OOM events,
+including the repeated October 28 failure, not recreated exhaustion workloads.
+Parser contracts cover distinct repeated events, page/KiB units, missing
 context, spoofed application messages, PID/boot/time mismatches, cgroup versus
 global/allocation-constrained OOM, overflow, cancellation and stable event
 identity as context becomes available. Run `design-checks.py memory` for the

@@ -464,6 +464,33 @@ mod tests {
     }
 
     #[test]
+    fn repeated_real_event_retains_its_own_victim_and_exhausted_swap() {
+        let repeated = include_str!("../tests/fixtures/opencode-kernel-oom-repeated.jsonl");
+        let events = parse(&format!("{FIXTURE}\n{repeated}"), 4096);
+        assert_eq!(events.len(), 2);
+        let event = &events[1];
+        assert_eq!(event.time_us, 1_793_238_294_994_549);
+        assert_eq!((event.pid, event.name.as_str()), (46694, "node"));
+        assert_eq!(event.kind, "System-wide memory exhaustion");
+        assert_eq!(event.anonymous_bytes, Some(3_597_644 * 1024));
+        assert_eq!(event.swap_bytes, Some(131_002 * 4096));
+        assert_eq!(event.swap_free_bytes, Some(24 * 1024));
+        assert_eq!(event.swap_total_bytes, Some(4_194_300 * 1024));
+        assert_eq!(event.processes[0].pid, 46694);
+        assert!(event.processes.iter().any(|p| p.name == "rustc"));
+        assert!(!event.processes.iter().any(|p| p.pid == 6557));
+        assert!(event.context_available);
+        let details = event.details();
+        assert!(details.contains("3.43 GiB"));
+        assert!(details.contains("Swap was almost completely exhausted"));
+        assert!(details.contains("does not prove a memory leak"));
+        assert_ne!(
+            crate::system_logs::identity(&events[0].entry()),
+            crate::system_logs::identity(&event.entry())
+        );
+    }
+
+    #[test]
     fn marker_without_context_reports_unknown_not_zero_or_healthy() {
         let event = parse(&only_kill(), 4096).remove(0);
         assert_eq!(event.anonymous_bytes, Some(5_401_820 * 1024));

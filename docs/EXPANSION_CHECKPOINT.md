@@ -855,3 +855,34 @@ boot, and no swap setting was changed. The existing goal remains **active**.
 Optimized interaction/resource reconciliation, matching production deployment,
 final demo reconciliation and publication remain outstanding; no prior passing
 budget is attributed to this new source.
+
+## Repeated memory-failure acceptance case — October 28, 2026, 11:25 PM EDT
+
+The second screenshot corresponds to the recorded 9:44:54 PM kernel OOM:
+Node PID 46694 held 3.43 GiB anonymous RAM and 511.7 MiB swap, with only
+24 KiB host swap free. The terminal scope subsequently stopped at 9:46:24 PM.
+A fresh kernel-journal query at 11:25 PM showed no later memory kill.
+Read-only OpenCode execution metadata establishes overlapping Node tests and
+TypeScript checks, but does not establish which command owned the killed PID.
+No memory leak is inferred. This agent's Rust build also overlapped and added
+load; CPU/disk niceness did not provide a memory bound.
+
+The same Tend candidate postmortem backend decoded the real event. A second
+sanitized recorded fixture now verifies the victim, units, exhausted swap,
+separate event identity and absence of context from the earlier kill. All
+eleven targeted postmortem tests pass. Three build-guard contracts also pass.
+The targeted Rust compilation completed in 21.59 seconds inside the guard.
+
+`scripts/limited-build.py` is dry-run-first and limits this agent's Cargo jobs
+to a transient user scope: 768 MiB memory high, 1 GiB memory maximum, 256 MiB
+swap maximum and one Cargo job. It defers when headroom is insufficient or a
+large Node job is present, and interrupts only its owned build if pressure
+rises. A tiny probe verified the actual kernel limit values. No exhaustion
+test or real user-process signal test was performed. OpenCode was not edited,
+stopped or restarted. This does not solve its unbounded parallel checks.
+
+Private records remain in the sibling
+`performance/oom-opencode-20261028-214454` directory: `FINDINGS.md`, kernel and
+terminal JSONL, actual Tend report, cgroup-limit probe and targeted test logs.
+The expanded candidate is not installed over the existing app. Full release
+reconciliation and the tracked feature-delivery goal remain incomplete.
