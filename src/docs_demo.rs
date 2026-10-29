@@ -348,7 +348,7 @@ pub fn record(
                 }
             }
             244 => {
-                assert!(text(&page(&stack, "system-logs")).contains("1 matching events"));
+                assert!(text(&page(&stack, "system-logs")).contains("1 matching event"));
                 evidence.push(json!({"frame":frame,"searched":1}));
             }
             248 => {
@@ -1791,6 +1791,87 @@ pub fn validate_capture(outer: &gtk::Box, stack: &gtk::Stack, path: &str) {
     .unwrap();
 }
 
+/// Reproduce the recorded OpenCode-terminal OOM through actual native actions.
+/// Uses historical kernel JSON; never starts a memory-consuming workload.
+pub fn memory_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::Box,stack:&gtk::Stack,directory:&str) {
+    assert!(std::env::var_os("TEND_DEMO_DIR").is_some());
+    let directory=std::path::PathBuf::from(directory);fs::create_dir_all(&directory).unwrap();
+    let (app,win,outer,stack)=(app.clone(),win.clone(),outer.clone(),stack.clone());
+    stack.set_transition_type(gtk::StackTransitionType::None);
+    glib::timeout_add_local_once(Duration::from_millis(600),move|| {
+        let mut trace=vec![];
+        win.set_default_size(1100,820);wait_main_context(Duration::from_millis(250));
+        let diagnostics=page(&stack,"diagnostics");stack.set_visible_child_name("diagnostics");
+        let section=descendants(&diagnostics).into_iter().find(|w|w.widget_name()=="memory-incidents").unwrap().downcast::<gtk::Expander>().unwrap();
+        assert!(!section.is_expanded());section.set_expanded(true);
+        wait_main_context(Duration::from_millis(200));
+        let explain=button(&section,"Explain recent memory failures");
+        action(&mut trace,0,"Explain recent memory failures",&explain,&outer);
+        explain.emit_clicked();assert!(wait_until(||explain.is_sensitive(),Duration::from_secs(15)));
+        let report=descendants(&section).into_iter().find_map(|w|w.downcast::<gtk::TextView>().ok()).unwrap();
+        let buffer=report.buffer();let full=buffer.text(&buffer.start_iter(),&buffer.end_iter(),false).to_string();
+        for expected in ["1 recorded kernel OOM kill","System-wide memory exhaustion","node (PID 6557)","5.15 GiB","2.78 GiB","228.0 KiB of 4.00 GiB","does not prove a memory leak or identify its parent application"] {assert!(full.contains(expected),"Missing {expected}: {full}");}
+        fs::write(directory.join("native-report.txt"),&full).unwrap();
+        for name in ["Export text","Export JSON"] {
+            button(&section,name).emit_clicked();
+            assert!(text(&section).contains("Saved "));
+        }
+        let exports=fs::read_dir(tend::workstation::home().join("Documents/Tend reports")).unwrap().map(|p|p.unwrap().path()).collect::<Vec<_>>();
+        assert_eq!(exports.len(),2);
+        for path in &exports {assert!(fs::read_to_string(path).unwrap().contains("5.15 GiB"));}
+        capture_widget(&outer,&directory.join("memory-diagnostics-1100.png"));
+        win.set_default_size(720,820);wait_main_context(Duration::from_millis(250));
+        capture_widget(&outer,&directory.join("memory-diagnostics-720.png"));
+        win.set_default_size(1100,820);wait_main_context(Duration::from_millis(250));
+        let logs=page(&stack,"system-logs");stack.set_visible_child_name("system-logs");wait_main_context(Duration::from_millis(200));
+        click(&logs,&outer,&mut trace,1,"Last crashed apps");
+        let selection=log_selection(&logs);
+        assert!(wait_until(||button(&logs,"Last crashed apps").is_sensitive()&&selection.n_items()==1,Duration::from_secs(15)),"{}",text(&logs));
+        assert_eq!(dropdown(&stack,"Log source").selected(),2);
+        selection.set_selected(0);
+        let details=text(&logs);for expected in ["node (PID 6557)","5.15 GiB","2.78 GiB","Event ID:"] {assert!(details.contains(expected),"{details}");}
+        let search=descendants(&logs).into_iter().find_map(|w|w.downcast::<gtk::SearchEntry>().ok().filter(|e|e.placeholder_text().as_deref()==Some("Search application, service, PID or message"))).unwrap();
+        action(&mut trace,2,"Filter by victim PID",&search,&outer);assert!(search.is_mapped());assert!(search.grab_focus());
+        search.set_text("6557");wait_main_context(Duration::from_millis(300));assert!(text(&logs).contains("1 matching event."));
+        search.set_text("no-matching-victim");assert!(wait_until(||selection.n_items()==0,Duration::from_secs(3)));
+        search.set_text("6557");assert!(wait_until(||selection.n_items()==1,Duration::from_secs(3)));
+        wait_main_context(Duration::from_millis(350));selection.set_selected(0);wait_main_context(Duration::from_millis(350));
+        assert!(text(&logs).contains("Swap free at the kill: 228.0 KiB of 4.00 GiB"));
+        capture_widget(&outer,&directory.join("memory-logs.png"));
+        // All activity periods are selected explicitly: retained real fixture
+        // timestamps must stay usable when this check is rerun months later.
+        let activity=page(&stack,"activity");stack.set_visible_child_name("activity");
+        let control=|tip:&str|descendants(&activity).into_iter().find_map(|w|w.downcast::<gtk::DropDown>().ok().filter(|w|w.tooltip_text().as_deref()==Some(tip))).unwrap();
+        control("Activity source").set_selected(3);control("Activity time range").set_selected(4);
+        let category=control("Activity category");category.set_selected(3);
+        let table=descendants(&activity).into_iter().find_map(|w|w.downcast::<gtk::ColumnView>().ok()).unwrap();let model=table.model().unwrap();
+        let load=button(&activity,"Load recent activity");
+        wait_main_context(Duration::from_millis(250));
+        action(&mut trace,2,"Load recent activity",&load,&outer);load.emit_clicked();
+        assert!(wait_until(||load.is_sensitive()&&model.n_items()==1,Duration::from_secs(15)),"{}",text(&activity));
+        model.select_item(0,true);assert!(text(&activity).contains("System-wide memory exhaustion"));
+        assert!(text(&activity).contains("OOM kill"));
+        capture_widget(&outer,&directory.join("memory-activity.png"));
+        category.set_selected(5);load.emit_clicked();assert!(wait_until(||load.is_sensitive(),Duration::from_secs(15)));assert_eq!(model.n_items(),0);
+        category.set_selected(3);control("Activity result").set_selected(2);load.emit_clicked();assert!(wait_until(||load.is_sensitive(),Duration::from_secs(15)));assert_eq!(model.n_items(),1);
+        let include=descendants(&activity).into_iter().find_map(|w|w.downcast::<gtk::CheckButton>().ok().filter(|c|c.label().is_some_and(|s|s.starts_with("Include readable crashes")))).unwrap();include.set_active(false);load.emit_clicked();assert!(wait_until(||load.is_sensitive(),Duration::from_secs(15)));assert_eq!(model.n_items(),0);
+        // A missing journal context is uncertainty, never a fabricated zero.
+        let fixture=tend::workstation::home().join("demo-oom.jsonl");
+        let retained=directory.join("complete-oom.jsonl");fs::rename(&fixture,&retained).unwrap();
+        let raw=fs::read_to_string(&retained).unwrap();fs::write(&fixture,format!("{}\n",raw.lines().last().unwrap())).unwrap();
+        stack.set_visible_child_name("diagnostics");explain.emit_clicked();assert!(wait_until(||explain.is_sensitive(),Duration::from_secs(15)));
+        let partial=buffer.text(&buffer.start_iter(),&buffer.end_iter(),false).to_string();
+        for expected in ["scope unconfirmed","Swapped memory: Not recorded","missing figures are not zero"] {assert!(partial.contains(expected),"{partial}");}
+        fs::rename(&fixture,directory.join("partial-oom.jsonl")).unwrap();fs::rename(&retained,&fixture).unwrap();
+        fs::write(directory.join("memory-evidence.json"),serde_json::to_vec_pretty(&json!({
+            "actual_native_actions":trace,"killed_pid":6557,"anonymous_bytes":5401820u64*1024,"swap_bytes":728098u64*4096,
+            "explanation_from_recorded_kernel_event":true,"crash_source_catches_no_core_dump":true,"pid_search_filters":true,"local_text_and_json_exports":exports.len(),
+            "activity_pressure_and_crash_categories_distinct":true,"failed_result_includes_oom":true,"incident_reads_can_be_excluded":true,
+            "missing_context_reported_unknown":true,"fixture_only":true,"stress_test_executed":false,"system_actions_executed":false
+        })).unwrap()).unwrap();app.activate_action("quit",None);
+    });
+}
+
 /// Phase-specific real-widget regression checks. Runs in a retained fixture and
 /// exits only this NON_UNIQUE preview, never the installed/running application.
 pub fn activity_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::Box,stack:&gtk::Stack,directory:&str) {
@@ -2238,7 +2319,7 @@ pub fn health_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk::B
         // The optional crash check reads only prepared public journal data.
         let crashes=named(&widget,"monitor-crashes").downcast::<gtk::Switch>().unwrap();crashes.set_active(true);button(&widget,"Save changes").emit_clicked();assert!(wait_until(||tend::health::Settings::read().is_ok_and(|s|s.crashes),Duration::from_secs(6)));wait_main_context(Duration::from_millis(250));
         let journal=home.join("demo-journal.jsonl");let original=journal.with_extension("health-original");fs::rename(&journal,&original).unwrap();let report=json!({"__REALTIME_TIMESTAMP":((tend::workstation::now()-1)*1000000).to_string(),"PRIORITY":"3","_COMM":"fixture-app","COREDUMP_EXE":"/fixture/app","COREDUMP_PID":"42","MESSAGE":"Fixture crash; no real app was stopped"});fs::write(&journal,format!("{report}\n")).unwrap();crate::health_ui::qa_crashes(&app);
-        assert!(wait_until(||notifications().len()==4,Duration::from_secs(6)));assert_eq!(notifications()[3]["title"],"Recent application crashes");crate::health_ui::qa_crashes(&app);wait_main_context(Duration::from_millis(400));assert_eq!(notifications().len(),4);fs::rename(&journal,directory.join("fixture-crash-journal.jsonl")).unwrap();fs::rename(original,&journal).unwrap();
+        assert!(wait_until(||notifications().len()==4,Duration::from_secs(6)));assert_eq!(notifications()[3]["title"],"Recent crashes or memory kills");crate::health_ui::qa_crashes(&app);wait_main_context(Duration::from_millis(400));assert_eq!(notifications().len(),4);fs::rename(&journal,directory.join("fixture-crash-journal.jsonl")).unwrap();fs::rename(original,&journal).unwrap();
         named(&widget,"monitor-enabled").downcast::<gtk::Switch>().unwrap().set_active(false);button(&widget,"Save changes").emit_clicked();assert!(wait_until(||!crate::health_ui::enabled(),Duration::from_secs(6)));let count=notifications().len();crate::health_ui::qa_observe(&app,100.,start+1000000);wait_main_context(Duration::from_millis(300));assert_eq!(notifications().len(),count);assert_eq!(crate::health_ui::summary(),"Monitoring off");
         dialog.close();drop(widget);drop(dialog);drop(crashes);
         let query=tend::activity::Query{source:2,category:3,..Default::default()};

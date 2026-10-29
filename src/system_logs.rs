@@ -20,6 +20,9 @@ fn string(v: &Value, key: &str) -> String {
 }
 pub fn decode(line: &str) -> Option<Entry> {
     let v: Value = serde_json::from_str(line).ok()?;
+    if v["_TRANSPORT"].as_str()==Some("kernel") && v["MESSAGE"].as_str().is_some_and(|s|s.starts_with("Out of memory: Killed process ")||s.starts_with("Memory cgroup out of memory: Killed process ")) {
+        if let Some(incident)=crate::memory_incidents::parse(line,0).into_iter().next(){return Some(incident.entry());}
+    }
     let time = v["__REALTIME_TIMESTAMP"].as_str()?.parse::<i64>().ok()? / 1_000_000;
     let priority = v["PRIORITY"]
         .as_str()
@@ -91,12 +94,14 @@ pub fn entries_cancellable(source: u32, period: u32, limit: u32, cancelled: &std
         // the user's journal/crash reports in a documentation recording.
         let input = fs::read_to_string(crate::workstation::home().join("demo-journal.jsonl"))
             .map_err(|e| e.to_string())?;
-        let entries: Vec<_> = input
+        let mut entries: Vec<_> = input
             .lines()
             .filter_map(decode)
             .filter(|e| source != 2 || e.crash)
             .take(limit as usize)
             .collect();
+        if source==2 {entries.extend(crate::memory_incidents::load(period,cancelled)?.into_iter().map(|e|e.entry()));}
+        entries.sort_by_key(|e|std::cmp::Reverse(e.time));entries.truncate(limit as usize);
         return Ok(entries);
     }
     let mut cmd = Command::new("/usr/bin/journalctl");
@@ -104,7 +109,7 @@ pub fn entries_cancellable(source: u32, period: u32, limit: u32, cancelled: &std
         "--quiet",
         "--no-pager",
         "--output=json",
-        "--output-fields=__REALTIME_TIMESTAMP,PRIORITY,_COMM,_PID,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,SYSLOG_IDENTIFIER,MESSAGE,COREDUMP_EXE,COREDUMP_PID,COREDUMP_SIGNAL_NAME,MESSAGE_ID",
+        "--output-fields=__REALTIME_TIMESTAMP,_BOOT_ID,_TRANSPORT,PRIORITY,_COMM,_PID,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,SYSLOG_IDENTIFIER,MESSAGE,COREDUMP_EXE,COREDUMP_PID,COREDUMP_SIGNAL_NAME,MESSAGE_ID",
         "--lines",
         &limit.clamp(100, 5000).to_string(),
     ]);
@@ -132,6 +137,7 @@ pub fn entries_cancellable(source: u32, period: u32, limit: u32, cancelled: &std
         .filter_map(decode)
         .collect();
     if source == 2 {
+        entries.extend(crate::memory_incidents::load(period,cancelled)?.into_iter().map(|e|e.entry()));
         if let Ok(files) = fs::read_dir("/var/crash") {
             let mut reports:Vec<_>=files.flatten().take(1000).map(|f|f.path()).filter_map(|p|{
                 let m=fs::symlink_metadata(&p).ok()?;
@@ -219,6 +225,15 @@ pub fn entries_cancellable(source: u32, period: u32, limit: u32, cancelled: &std
 pub fn time(value: i64) -> String {
     crate::presentation::when(value)
 }
+/// OOM context may become unavailable or more complete on a later read. Keep
+/// notification/timeline identity tied to the recorded event, not that context.
+pub fn identity(entry:&Entry)->String{
+    if entry.source.starts_with("Out of memory · ") {
+        if let Some(id)=entry.details.lines().find(|s|s.starts_with("Event ID: ")){return format!("oom:{id}");}
+        let boot=entry.details.lines().find(|s|s.starts_with("Boot ID: ")).unwrap_or("");
+        format!("{}:{}:{boot}",entry.time,entry.source)
+    }else{format!("{}:{}:{}:{}",entry.time,entry.source,entry.message,entry.details)}
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +245,14 @@ mod tests {
         assert!(e.source.contains("example"));
         let ordinary=decode(r#"{"__REALTIME_TIMESTAMP":"1700000000000000","PRIORITY":"3","MESSAGE":"Network error"}"#).unwrap();
         assert!(!ordinary.crash);
+    }
+    #[test]
+    fn trusted_oom_uses_victim_pid_without_a_core_dump() {
+        let line=include_str!("../tests/fixtures/opencode-kernel-oom.jsonl").lines().last().unwrap();
+        let event=decode(line).unwrap();
+        assert!(event.crash);
+        assert!(event.source.contains("node (PID 6557)"));
+        assert!(event.details.contains("Anonymous resident memory: 5.15 GiB"));
+        assert!(!decode(&line.replace("\"kernel\"", "\"stdout\"")).unwrap().crash);
     }
 }

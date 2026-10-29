@@ -179,7 +179,7 @@ pub fn run(
                 severity.set_selected(selection);
                 win.queue_draw();
                 until(|| pending.borrow().is_none());
-                assert!(text(&logs).contains(&format!("{count} matching events")));
+                assert!(text(&logs).contains(&format!("{count} matching event{}",if count==1{""}else{"s"})));
                 observations.push(json!({"action":"severity_filter","repeat":repeat,"matches":count,"first_painted_feedback_ms":latency.borrow().last().unwrap(),"feedback_details":feedback_details.borrow().last().unwrap()}));
                 wait(Duration::from_millis(80));
             }
@@ -225,7 +225,7 @@ pub fn run(
                 severity.set_selected(selected);
                 win.queue_draw();
                 until(|| pending.borrow().is_none());
-                assert!(text(&logs).contains(&format!("{count} matching events")));
+                assert!(text(&logs).contains(&format!("{count} matching event{}",if count==1{""}else{"s"})));
                 observations.push(json!({"action":"large_journal_filter","repeat":repeat,"matches":count,"first_painted_feedback_ms":latency.borrow().last().unwrap(),"feedback_details":feedback_details.borrow().last().unwrap()}));
                 wait(Duration::from_millis(80));
             }

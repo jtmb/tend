@@ -23,6 +23,16 @@ settings remain untouched. See [recording and design checks](demo/README.md)
 for prerequisites and fixture details. Screenshots may contain local process
 names from read-only performance sampling; review before publishing.
 
+The memory-failure case is an anonymized **recorded** Node kernel OOM, not a
+recreated exhaustion workload. Parser contracts cover page/KiB units, missing
+context, spoofed application messages, PID/boot/time mismatches, cgroup versus
+global/allocation-constrained OOM, overflow, cancellation and stable event
+identity as context becomes available. Run `design-checks.py memory` for the
+native requested explanation, local exports, PID filtering and incident
+category checks. `cargo run --locked --example memory-report -j 1` reads the
+real available journal through the same backend without changing the machine;
+its report can contain private process and cgroup names.
+
 `test_admin_sandbox.py` executes the real helper and library settings operations
 in an unprivileged bubblewrap user/mount namespace. The host filesystem is
 read-only, only temporary fixtures are writable, and there is no network or

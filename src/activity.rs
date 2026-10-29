@@ -448,7 +448,7 @@ pub fn load(query: &Query, before: Option<&Cursor>) -> Result<Page, String> {
         }
     }
     if matches!(query.source, 0 | 3)
-        && matches!(query.category, 0 | 5)
+        && matches!(query.category, 0 | 3 | 5)
         && matches!(query.outcome, 0 | 2)
         && query.include_crashes
     {
@@ -467,6 +467,8 @@ pub fn load(query: &Query, before: Option<&Cursor>) -> Result<Page, String> {
             let search = query.search.to_lowercase();
             let mut seen = std::collections::HashSet::new();
             for entry in entries {
+                let oom=entry.source.starts_with("Out of memory · ");
+                if (query.category==3&&!oom)||(query.category==5&&oom){continue;}
                 if entry.time.saturating_mul(1000) < query.minimum()
                     || (!search.is_empty()
                         && !format!("{} {} {}", entry.source, entry.message, entry.details)
@@ -475,10 +477,7 @@ pub fn load(query: &Query, before: Option<&Cursor>) -> Result<Page, String> {
                 {
                     continue;
                 }
-                let identity = format!(
-                    "{}:{}:{}:{}",
-                    entry.time, entry.source, entry.message, entry.details
-                );
+                let identity = crate::system_logs::identity(&entry);
                 let mut hash = 14695981039346656037u64;
                 for byte in identity.bytes() {
                     hash = (hash ^ byte as u64).wrapping_mul(1099511628211);
@@ -491,7 +490,7 @@ pub fn load(query: &Query, before: Option<&Cursor>) -> Result<Page, String> {
                 if before.is_some_and(|c| cursor >= *c) || !seen.insert(identity) {
                     continue;
                 }
-                events.push(Event {cursor,id:format!("crash:{hash:x}"),category:"Crashes".into(),source:"System logs".into(),title:bounded(&entry.source,240),outcome:"Crash report".into(),summary:bounded(&entry.message,240),details:format!("{}\n{}\n\n{}\n\nA crash report is evidence of a crash, not proof of the cause of other slowdowns. Report file timestamps can describe an updated report.",entry.source,crate::presentation::exact(entry.time),bounded(&entry.details,16*1024))});
+                events.push(Event {cursor,id:format!("crash:{hash:x}"),category:if oom{"Memory pressure"}else{"Crashes"}.into(),source:"System logs".into(),title:bounded(&entry.source,240),outcome:if oom{"OOM kill"}else{"Crash report"}.into(),summary:bounded(&entry.message,240),details:format!("{}\n{}\n\n{}\n\n{}",entry.source,crate::presentation::exact(entry.time),bounded(&entry.details,16*1024),if oom{"Recorded kernel memory kill; this alone does not identify an application leak."}else{"A crash report is evidence of a crash, not proof of the cause of other slowdowns. Report file timestamps can describe an updated report."})});
             }
             events.sort_by_key(|e| std::cmp::Reverse(e.cursor));
             let more = events.len() > PAGE;
@@ -502,7 +501,7 @@ pub fn load(query: &Query, before: Option<&Cursor>) -> Result<Page, String> {
             Ok(page) => sources.push(page),
             Err(e) => warnings.push(format!("Crash reports unavailable: {e}")),
         }
-        warnings.push("Crash queries cover at most 1,000 recent journal entries and 100 readable report headers from the last seven days. Protected or rotated records may be absent.".into());
+        warnings.push("Incident queries cover up to 1,000 crash journal entries, 100 readable report headers and five kernel OOM kills from the last seven days, with bounded context. Protected or rotated records may be absent.".into());
     }
     Ok(merge(sources, warnings))
 }

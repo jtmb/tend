@@ -30,9 +30,11 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
     let add = gtk::Button::with_label("Add rule…");
     let edit = gtk::Button::with_label("Edit selected…");
     let remove = gtk::Button::with_label("Remove selected");
+    let reload = gtk::Button::with_label("Reload rules");
     bar.insert(&add, -1);
     bar.insert(&edit, -1);
     bar.insert(&remove, -1);
+    bar.insert(&reload, -1);
     p.append(&group);
     p.append(&list);
     p.reorder_child_after(&bar, Some(&list));
@@ -75,8 +77,15 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
         let rebuild = rebuild.clone();
         let status = status.clone();
         move |index| {
-            let old = index.and_then(|i| policy.borrow().rules.get(i).cloned());
+            // Preserve the exact editor baseline across external edits and the
+            // later automatic-policy confirmation, not just the list index.
+            let baseline = policy.borrow().clone();
+            let old = index.and_then(|i| baseline.rules.get(i).cloned());
             let d=adw::MessageDialog::new(Some(&win),Some(if old.is_some(){"Edit cleanup rule"}else{"Add cleanup rule"}),Some("Select a specific folder and filename patterns. Preview cleanup before deleting anything."));
+            // A response button closes before emitting ::response. Hiding keeps
+            // the real draft alive for an I/O/conflict failure; destroy only on
+            // success or explicit cancellation.
+            d.set_hide_on_close(true);
             d.add_responses(&[("cancel", "Cancel"), ("save", "Save rule")]);
             d.set_default_response(Some("cancel"));
             d.set_close_response("cancel");
@@ -188,6 +197,7 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
             // and reporting validation failures on the page underneath it.
             // Weak control references avoid keeping closed dialogs alive.
             let validate: Rc<dyn Fn()> = Rc::new({
+                let validation = validation.clone();
                 let (dialog, name, path, pattern, days, recurse, enabled) = (
                     d.downgrade(), name.downgrade(), path.downgrade(),
                     pattern.downgrade(), days.downgrade(), recurse.downgrade(),
@@ -224,9 +234,9 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
                 rebuild.clone(),
                 status.clone(),
             );
-            let parent = win.clone();
-            d.connect_response(None, move |_, r| {
+            d.connect_response(None, move |dialog, r| {
                 if r != "save" {
+                    dialog.destroy();
                     return;
                 }
                 let rule = rules::Rule {
@@ -237,32 +247,77 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
                     recursive: recurse.is_active(),
                     enabled: enabled.is_active(),
                 };
-                let mut next = policy.borrow().clone();
+                let mut next = baseline.clone();
                 if let Some(i) = index {
                     if let Some(slot) = next.rules.get_mut(i) {
                         *slot = rule;
+                    } else {
+                        validation.show("This rule changed. Cancel and reload rules before editing again.", None, true);
+                        dialog.present();
+                        return;
                     }
                 } else {
                     next.rules.push(rule);
                 }
                 let (policy,rebuild,changed,status)=(policy.clone(),rebuild.clone(),changed.clone(),status.clone());
                 let error_status=status.clone();
-                let save=move||match next.save() {
-                    Ok(()) => { *policy.borrow_mut()=next.clone();rebuild();changed();status.set_text("Rule saved. Preview cleanup to inspect eligible files."); },
-                    Err(e)=>status.set_text(&format!("Rule not saved: {e}")),
+                let (save_dialog, validation, expected) = (dialog.clone(), validation.clone(), baseline.clone());
+                let (error_validation, error_changed) = (validation.clone(), changed.clone());
+                let save=move||match next.save_checked(Some(&expected)) {
+                    Ok(()) => {
+                        *policy.borrow_mut()=next;rebuild();changed();
+                        status.remove_css_class("error");
+                        status.set_text("Rule saved. Preview cleanup to inspect eligible files.");
+                        save_dialog.destroy();
+                    },
+                    Err(e)=> {
+                        changed();status.add_css_class("error");status.set_text(&format!("Rule not saved: {e}"));
+                        validation.show("Rule not saved. Your draft is kept here.",Some(&format!("{e}\nIf rules changed elsewhere, cancel this draft and use Reload rules before editing again.")),true);
+                        save_dialog.present();
+                    },
                 };
                 match rules::Schedule::load() {
-                    Ok(s)if s.enabled=>crate::workbench::confirm(&parent,"Change an automatic cleanup rule?","Enabled user cron jobs will use this rule at their next run. Review the folder, patterns and minimum age.","Save rule",false,save),
-                    Ok(_)=>save(),Err(e)=>error_status.set_text(&format!("Cannot confirm schedule state: {e}")),
+                    Ok(s)if s.enabled=> {
+                        dialog.present();dialog.set_sensitive(false);
+                        let confirm=adw::MessageDialog::new(Some(dialog),Some("Change an automatic cleanup rule?"),Some("Enabled user cron jobs will use this rule at their next run. Review the folder, patterns and minimum age."));
+                        confirm.add_responses(&[("cancel","Cancel"),("save","Save rule")]);
+                        confirm.set_default_response(Some("cancel"));confirm.set_close_response("cancel");
+                        confirm.set_response_appearance("save",adw::ResponseAppearance::Suggested);
+                        let (editor,action)=(dialog.clone(),RefCell::new(Some(save)));
+                        confirm.connect_response(None,move|_,response|{
+                            editor.set_sensitive(true);
+                            let action=action.borrow_mut().take();
+                            if response=="save" {if let Some(action)=action {action();}} else {editor.present();}
+                        });confirm.present();
+                    },
+                    Ok(_)=>save(),Err(e)=> {
+                        error_changed();error_status.add_css_class("error");
+                        error_status.set_text(&format!("Cannot confirm schedule state: {e}"));
+                        error_validation.show("Cannot confirm the cleanup schedule. Your draft is kept here.",Some(&e),true);
+                        dialog.present();
+                    },
                 }
             });
             d.present();
         }
     });
     {
-        let(p,r,c)=(policy.clone(),rebuild.clone(),changed.clone());
+        let(p,r,c,status)=(policy.clone(),rebuild.clone(),changed.clone(),status.clone());
         crate::settings_ui::register(tend::settings_bundle::Section::FolderRules,||false,move|value|{
-            if let Ok(v)=serde_json::from_value::<rules::Policy>(value.clone()){*p.borrow_mut()=v;r();c();}
+            if let Ok(v)=serde_json::from_value::<rules::Policy>(value.clone()){
+                *p.borrow_mut()=v;r();c();status.remove_css_class("error");
+                status.set_text("Rules updated from reviewed settings. Preview cleanup again.");
+            }
+        });
+    }
+    {
+        let (policy,rebuild,changed,status)=(policy.clone(),rebuild.clone(),changed.clone(),status.clone());
+        reload.connect_clicked(move |_| match rules::Policy::load() {
+            Ok(latest)=> {
+                *policy.borrow_mut()=latest;rebuild();changed();status.remove_css_class("error");
+                status.set_text("Rules reloaded. Preview cleanup again before cleaning.");
+            },
+            Err(error)=> {changed();status.add_css_class("error");status.set_text(&format!("Rules could not reload: {error}"));},
         });
     }
     let e = editor.clone();
@@ -277,20 +332,22 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
     let ls = list;
     remove.connect_clicked(move |_| {
         let Some(r) = ls.selected_row() else { return };
-        let mut next = policy.borrow().clone();
+        let baseline = policy.borrow().clone();
+        let mut next = baseline.clone();
         let i = r.index() as usize;
         if i >= next.rules.len() {
             return;
         }
         next.rules.remove(i);
-        match next.save() {
+        match next.save_checked(Some(&baseline)) {
             Ok(()) => {
                 *policy.borrow_mut() = next;
                 rebuild();
                 changed();
+                status.remove_css_class("error");
                 status.set_text("Rule removed. Existing files were not changed.");
             }
-            Err(e) => status.set_text(&e),
+            Err(e) => {changed();status.add_css_class("error");status.set_text(&format!("Rule not removed: {e} Reload rules and review again."));},
         }
     });
     p

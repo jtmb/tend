@@ -145,6 +145,18 @@ pub fn add(stack: &gtk::Stack) {
     intro.append(&label("Understand a slowdown", "title-2"));
     intro.append(&label("Use the same projects and interactions for each recording. The default is three minutes, sampled every two seconds. A recording continues if Tend is hidden and stops when you quit.","body"));
     root.append(&intro);
+    let incident_body=column(8);
+    incident_body.append(&label("Inspect recorded kernel memory kills, memory use at the event and the affected scope. Current free memory may recover after a kill.","caption"));
+    let incident_actions=workbench::buttons(&incident_body);
+    let explain=gtk::Button::with_label("Explain recent memory failures");
+    incident_actions.insert(&explain,-1);
+    let memory_report=workbench::text_panel(&incident_body);
+    workbench::report_hint(&memory_report,"Read the last 24 hours of available kernel OOM evidence. No stress test is needed.");
+    workbench::exports(&incident_body,&memory_report);
+    explain.connect_clicked(move|button|workbench::report_job(button,&memory_report,||tend::memory_incidents::report(2)));
+    let incident_section=gtk::Expander::builder().label("Memory failures and OOM kills").child(&incident_body).build();
+    incident_section.set_widget_name("memory-incidents");crate::editor::guard_expanders(&incident_section);
+    root.append(&incident_section);
     let group = adw::PreferencesGroup::builder()
         .title("New recording")
         .build();

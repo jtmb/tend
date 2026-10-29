@@ -71,3 +71,14 @@ installation or a guarantee about external package repositories/desktop hosts.
 Latest fixture locations and authoritative logs are recorded in
 [the chronological checkpoint](EXPANSION_CHECKPOINT.md). The
 [phase plan](EXPANSION_PLAN.md) remains the completion ledger.
+
+
+The recorded OpenCode-terminal memory-failure acceptance case adds eleven Rust
+contracts, bringing the latest core run to 108 passing tests plus one ignored
+legacy destructive test. The real requested journal backend explains the
+historical kernel kills; isolated native workflows cover explanations, local
+exports, PID filters, Activity categories and missing context across standard,
+large-text, 200% and high-contrast variants. Existing activity, private-bus
+health alerts and stale-rule editor regressions pass. This is functional/visual
+evidence for the recorded source, not an updated optimized release budget.
+See the latest checkpoint for private artifact names and remaining delivery gates.

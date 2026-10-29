@@ -16,7 +16,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let p=page("System logs","Read recent events and crashed applications. Filter the results, then select an event for details. Logs are loaded only on request.");
     let controls = crate::workbench::buttons(&p);
     let source =
-        gtk::DropDown::from_strings(&["System journal", "My application logs", "Recent crashes"]);
+        gtk::DropDown::from_strings(&["System journal", "My application logs", "Crashes & kernel OOM kills"]);
     source.set_tooltip_text(Some("Log source"));
     let period =
         gtk::DropDown::from_strings(&["This boot", "Last hour", "Last 24 hours", "Last 7 days"]);
@@ -42,6 +42,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     let load = gtk::Button::with_label("Load logs");
     load.add_css_class("suggested-action");
     let crashes = gtk::Button::with_label("Last crashed apps");
+    crashes.set_tooltip_text(Some("Includes kernel out-of-memory kills, which may not produce a core dump"));
     let export = gtk::Button::with_label("Export filtered logs");
     export.set_sensitive(false);
     actions.insert(&load, -1);
@@ -176,7 +177,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             store.splice(0,store.n_items(),&visible);
             previous.set_sensitive(page>0);next.set_sensitive(end<filtered.len());
             range.set_text(&if filtered.is_empty(){"No matching events".into()}else{format!("{}–{} of {}",start+1,end,filtered.len())});
-            status.set_text(&format!("{} matching events. Pages show 25 at a time; export includes all matches. Searches apply to the most recent 1,000 loaded records. Missing entries may be rotated or unreadable.",filtered.len()));
+            status.set_text(&format!("{} matching event{}. Pages show 25 at a time; export includes all matches. Searches apply to the most recent 1,000 loaded records. Missing entries may be rotated or unreadable.",filtered.len(),if filtered.len()==1{""}else{"s"}));
             if filtered.is_empty() {
                 empty_title.set_text("No matching events");
                 empty_description.set_text("Try a wider time range or a different filter. Protected and rotated logs may be unavailable.");

@@ -780,3 +780,78 @@ accessibility and public demo. Matching production builds/deployment and
 publication remain outstanding. The completed retention-source budget remains
 valid only for its retained prior artifact. No installed app/helper, existing
 job, restart, login or authentication policy is changed. The goal remains active.
+
+
+## October 28, 2026 — Recorded OpenCode-terminal OOM acceptance
+
+The user supplied a real low-memory termination as an acceptance case for the
+existing expansion goal. Read-only kernel evidence confirms a global OOM at
+8:00:45 PM EDT: Node PID 6557 had 5.15 GiB anonymous resident memory and
+2.78 GiB swapped pages, with 228 KiB of 4 GiB host swap free. The requested
+production backend finds this and two earlier kernel kills. A concurrently
+running OpenCode-launched Node test that constructs TypeScript programs is a
+plausible job, but surviving metadata does not map the command directly to the
+victim PID. A separate completed typecheck is explicitly ruled out as that
+killed job. OpenCode source, sessions and jobs were not changed or rerun.
+
+Added `memory_incidents`: requested, bounded kernel-journal postmortems with
+trusted transport checks, victim PID/boot/time association, checked units,
+unknown missing data, and distinct global/cgroup/allocation-constrained cases.
+The reader requests at most five kills, with at most 1,024 records / 2 MiB /
+10 seconds per context read. It never joins an exited PID to a current process.
+Stable event identities prevent context availability from producing duplicate
+notifications or timeline entries. Diagnostics adds a collapsed memory-failure
+explanation with local exports; System logs includes OOM kills without core
+dumps, and Activity includes them under pressure and failed-result filters.
+Existing opt-in crash alerts use the same reader; no new background schedule,
+dependency, service or navigation page is added.
+
+`cargo test --locked -j 1` passes **108 tests** (105 library, three binary),
+with the existing destructive legacy fixture test still ignored. Eleven new
+contracts cover the recorded counters, missing context, spoofed messages,
+PID/boot/time mismatches, cgroup and constrained allocation, overflow/page units,
+cancellation, stable identities and crash-source victim decoding. The real
+read-only `memory-report` example uses this same production backend.
+Authoritative logs/manifests in the sibling private performance folder:
+`tend-opencode-oom-final-tests.log`, `tend-opencode-oom-build-manifest.json`,
+and `oom-opencode-20261028/tend-memory-report.txt` / `FINDINGS.md`.
+
+Final native checks invoke the real explanation button, export text/JSON,
+filter by victim PID, select evidence, distinguish Activity pressure from
+traditional crashes, include OOM under Failed, exclude optional incident reads,
+and preserve unknown values when context is truncated. All six original fixture
+inputs remain unchanged. Final fixtures:
+
+- Standard light: `tend-workflow-4wvvgna4`.
+- Large text / dark: `tend-workflow-u0ye6sx7`.
+- 200% scale / light: `tend-workflow-g7ylmp2y`.
+- High contrast / dark: `tend-workflow-mpeo0_wv`.
+
+Each contains native action coordinates, two diagnostic viewport captures,
+System logs and Activity captures, local exports and evidence JSON. Affected
+captures were visually inspected. Singular record/event labels discovered in
+that inspection were corrected. The final binary hash and build scope are in
+the manifest. These are unoptimized functional/visual checks, **not** a new
+optimized performance or release-budget result. The first fixture
+`tend-workflow-94aehak8` failed because its driver selected a hidden dropdown
+search entry; the driver now selects the actual mapped PID search field and
+checks its focus/bounds. Failed evidence is retained.
+
+Also completed the previously requested stale folder-rule save audit: actual
+Save buttons reproduced an unchecked overwrite (`tend-workflow-1_y_l4sc`).
+Add/Edit/Remove now use checked baselines, including across automatic-rule
+confirmation; a failed save preserves the real editor draft. Reload rules
+refreshes the list and invalidates previews. Native regression
+`tend-workflow-me8gg6qo` passes all four races, draft preservation and a fresh
+save. Traditional activity regression `tend-workflow-2zc12km8` and private-bus
+health/notification regression `tend-workflow-9ik0hb0i` pass. No actual cleanup,
+cron save, package update or user notification is performed.
+
+`tend-opencode-oom-invariants.json` confirms all fifteen protected config/job
+hashes still match the prior checkpoint. No existing app, login/authentication
+policy, maintenance schedule, installed binary/helper or restart policy changes.
+Only disk swap is currently active; no zram configuration is present on this
+boot, and no swap setting was changed. The existing goal remains **active**.
+Optimized interaction/resource reconciliation, matching production deployment,
+final demo reconciliation and publication remain outstanding; no prior passing
+budget is attributed to this new source.

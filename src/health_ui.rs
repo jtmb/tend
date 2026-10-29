@@ -422,7 +422,7 @@ fn read_crashes(app: &adw::Application, generation: u64) {
                 .filter(|e| e.crash && e.time > since as i64 && e.time <= checked as i64)
             {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                (e.time, &e.source, &e.details).hash(&mut hasher);
+                tend::system_logs::identity(&e).hash(&mut hasher);
                 let key = hasher.finish();
                 if r.crash_ids.contains(&key) {
                     continue;
@@ -445,9 +445,9 @@ fn read_crashes(app: &adw::Application, generation: u64) {
             }
             drop(r);
             if !sources.is_empty() && !snoozed {
-                let body=format!("{}\nOpen System logs for the reports. Up to 100 recent visible reports are checked; inaccessible reports are not included.",sources.join("\n"));
-                notify(&app,"Recent application crashes".into(),body.clone(),generation);
-                enqueue_audit(&format!("Recent application crashes\n{body}"),generation);
+                let body=format!("{}\nOpen System logs for the reports. Up to 100 recent readable incidents are checked, including five kernel OOM kills; protected or rotated records may be absent.",sources.join("\n"));
+                notify(&app,"Recent crashes or memory kills".into(),body.clone(),generation);
+                enqueue_audit(&format!("Recent crashes or memory kills\n{body}"),generation);
             }
             refresh();
         },
@@ -591,7 +591,7 @@ fn open_editor(win: &adw::ApplicationWindow, app: &adw::Application) {
         "Send a notice when an announced condition recovers",
         initial.recovery,
     );
-    let crashes=toggle(&timing,"Notify about new crashes","Optional bounded log read every five minutes; visible journal and crash headers only. Starts with new events after enabling.",initial.crashes);
+    let crashes=toggle(&timing,"Notify about crashes or memory kills","Optional bounded log read every five minutes; readable crash headers and kernel OOM evidence only. Starts with new events after enabling.",initial.crashes);
     crashes.set_widget_name("monitor-crashes");
     body.append(&timing);
     let live = adw::PreferencesGroup::builder()

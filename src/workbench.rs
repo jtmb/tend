@@ -206,7 +206,7 @@ pub(crate) fn exports(parent: &gtk::Box, view: &gtk::TextView) {
         stack.connect_visible_child_name_notify(update);
     }
 }
-fn report_job<F: FnOnce() -> Result<String, String> + Send + 'static>(
+pub(crate) fn report_job<F: FnOnce() -> Result<String, String> + Send + 'static>(
     b: &gtk::Button,
     v: &gtk::TextView,
     work: F,

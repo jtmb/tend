@@ -20,6 +20,20 @@ using CPU, memory, paging and pressure measurements. Missing counters, sampling
 gaps and different workload context remain visible. A correlation is not a
 proven cause, and low idle CPU alone does not prove better responsiveness.
 
+After an application is stopped for low memory, open **Diagnostics → Memory
+failures and OOM kills → Explain recent memory failures**. This requested report
+reads the last 24 hours of available kernel evidence and shows the killed
+process, historical RAM/swap figures, affected scope and other recorded resident
+sets. It distinguishes whole-machine exhaustion from a recorded cgroup limit.
+Missing context remains unknown; current free memory can recover after a kill.
+The victim is not automatically the application that caused all the pressure,
+and this report cannot reconstruct a vanished command line or prove a leak.
+
+**System logs → Last crashed apps** also includes kernel OOM kills without core
+dumps. Activity places them under **Pressure & diagnostics**, with result
+**OOM kill**; the **Failed** result filter includes them. Optional crash alerts
+use the same bounded incident reader without adding another polling schedule.
+
 ## See what grew and which project owns it
 
 **Storage** can record metadata snapshots of a requested folder and show added,

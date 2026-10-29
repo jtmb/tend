@@ -19,7 +19,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         "All activity",
         "Daily maintenance",
         "Tend actions",
-        "Crash reports",
+        "Crashes & kernel OOM kills",
     ]);
     source.set_tooltip_text(Some("Activity source"));
     let kind = gtk::DropDown::from_strings(&[
@@ -56,7 +56,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .hexpand(true)
         .build();
     body.append(&search);
-    let crashes = gtk::CheckButton::with_label("Include readable crash reports when loading");
+    let crashes = gtk::CheckButton::with_label("Include readable crashes and kernel OOM kills when loading");
     crashes.set_active(true);
     body.append(&crashes);
     let actions = crate::workbench::buttons(&body);
@@ -126,7 +126,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             if index == 2 {
                 match event.outcome.as_str() {
                     "Success" => label.add_css_class("success"),
-                    "Failed" | "Crash report" => label.add_css_class("error"),
+                    "Failed" | "Crash report" | "OOM kill" => label.add_css_class("error"),
                     "Deferred" | "Awaiting result" => label.add_css_class("warning"),
                     _ => {}
                 }
@@ -330,8 +330,9 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
                             next.set_sensitive(page.next.is_some());
                             export.set_sensitive(!page.events.is_empty());
                             status.set_text(&format!(
-                                "{} records on this page{} · queries are paused until requested",
+                                "{} record{} on this page{} · queries are paused until requested",
                                 page.events.len(),
+                                if page.events.len()==1{""}else{"s"},
                                 if page.next.is_some() {
                                     " · older records available"
                                 } else {

@@ -42,6 +42,16 @@ schedule/trigger restarts. Detailed evidence remains in EXPANSION_CHECKPOINT.md.
 | 6 — Alerts and panel | Optional15s cheap hidden monitoring; bounded optional crash reads; configurable alert hold/cooldown/snooze/recovery; fresh/paused panel summary and non-destructive shortcuts. | Opt-in shared monitoring, native editor, bounded optional crash reads, alert state machine and live panel implemented. Rust/native/private-bus/panel/visual/contract checks pass. Optimized ten-minute whole-app budgets and page/dialog geometry pass; final settled visual review remains in phase 7. |
 | 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | Settings bundles, ten review sections and inactive drafts have native/contract coverage. Earlier optimized builds pass background resource budgets; later interaction repeats fail even at normal priority. The latest rendering fixes need optimized latency/resource verification. The seventeen-page accessibility matrix, 174 dialog captures, settled visual review and local working README demo pass for their recorded checkpoints. Final artifact reconciliation, matching deployment and publication remain outstanding. |
 
+### Memory-failure acceptance case — October 28, 2026
+
+The user’s recurring OpenCode-terminal memory failure is now an acceptance
+case for phases 2, 5 and 6. Tend must explain a real kernel OOM without a core
+dump, distinguish recorded facts from unproven command/leak attribution, retain
+unknown values when context is missing, and expose it through Diagnostics,
+System logs and Activity. Validation replays sanitized historical evidence; it
+must not exhaust memory, stop user processes or change OpenCode. The existing
+tracked goal remains active; this case adds no restart or background job.
+
 ### Current checkpoint and next execution order
 
 The ledger records implementation evidence, not completion of a release. Source

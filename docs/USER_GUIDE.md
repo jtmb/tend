@@ -118,7 +118,7 @@ Open **System logs** and click **Load logs**, or **Last crashed apps** for the p
 
 Dates use readable Toronto times with full timestamp details. Apport rows distinguish report updates from the original reported crash date.
 
-The reader fetches up to 1,000 recent records on demand, shows matching results in 25-event pages and has no background polling. Crash detection uses structured systemd coredump events and readable Ubuntu Apport report headers. Crash memory dumps and environment fields are excluded from the displayed/exported Apport headers. Logs are never uploaded, and collection never requests administrator access. Protected/rotated records can be absent; recent crashes is not a complete historical inventory.
+The reader fetches up to 1,000 recent records on demand, shows matching results in 25-event pages and has no background polling. Crash detection uses structured systemd coredump events, readable Ubuntu Apport report headers and up to five recent kernel OOM kills with bounded context. OOM entries identify the actual killed process, including RAM and swap figures when recorded; they do not need a core dump. Use **Diagnostics → Memory failures and OOM kills** for the dedicated explanation. Crash memory dumps and environment fields are excluded from the displayed/exported Apport headers. Logs are never uploaded, and collection never requests administrator access. Protected/rotated records can be absent; recent crashes is not a complete historical inventory.
 
 ## Dock behavior
 

@@ -19,6 +19,9 @@ mod budget_probe;
 #[cfg(feature="docs-demo")]
 #[path="../docs/demo/release_qa.rs"]
 mod release_qa;
+#[cfg(feature="docs-demo")]
+#[path="../docs/demo/rules_qa.rs"]
+mod rules_qa;
 mod panel;
 mod process_tree_ui;
 mod storage_history_ui;
@@ -642,6 +645,10 @@ fn build(app: &adw::Application) {
         docs_demo::health_qa(app,&win,&outer,&stack,&directory);return;
     }
     refresh(&next, &free, &last, &phase, &badge, &refresh_button);
+    #[cfg(feature="docs-demo")]
+    if let Ok(directory)=std::env::var("TEND_MEMORY_QA"){docs_demo::memory_qa(app,&win,&outer,&stack,&directory);return;}
+    #[cfg(feature="docs-demo")]
+    if let Ok(directory)=std::env::var("TEND_RULES_QA"){rules_qa::run(app,&stack,&directory);return;}
     #[cfg(feature="docs-demo")]
     if let Ok(directory)=std::env::var("TEND_RELEASE_QA"){release_qa::run(app,&win,&outer,&stack,&directory);return;}
     #[cfg(feature="docs-demo")]

@@ -121,6 +121,7 @@ mod tests {
 pub mod cleanup_rules;
 pub mod preferences;
 pub mod system_logs;
+pub mod memory_incidents;
 pub mod task_stats;
 pub mod workstation;
 

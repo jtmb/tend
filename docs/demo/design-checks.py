@@ -13,7 +13,7 @@ import resource
 import signal
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity', 'health', 'bundles', 'release'])
+parser.add_argument('mode', choices=['matrix', 'accessibility', 'panel', 'demo', 'gallery', 'expansion', 'cleanup', 'activity', 'health', 'bundles', 'release', 'rules', 'memory'])
 parser.add_argument('--parent',type=Path,default=Path('/tmp/opencode'),help='Retained fixture directory; history tests require at least 2 GiB free')
 parser.add_argument('--binary',type=Path,default=Path('target/debug/tend'),help='Previously built docs-demo binary; never the installed application')
 parser.add_argument('--variant',choices=['standard','scale-200','large-text','high-contrast'],default='standard')
@@ -78,6 +78,14 @@ if args.mode == 'matrix':
         import hashlib
         p = root/name
         assert p.stat().st_size == fingerprint['bytes'] and hashlib.sha256(p.read_bytes()).hexdigest() == fingerprint['sha256'], name
+elif args.mode == 'memory':
+    # Recorded kernel counters, anonymized boot/scope; never create pressure.
+    (root/'home/demo-oom.jsonl').write_bytes((repo/'tests/fixtures/opencode-kernel-oom.jsonl').read_bytes())
+    run('memory',[binary],{'TEND_MEMORY_QA':str(root/'memory')},screen='1600x1100x24')
+    print((root/'memory/memory-evidence.json').read_text(),flush=True)
+elif args.mode == 'rules':
+    run('rules',[binary],{'TEND_RULES_QA':str(root/'rules')},screen='1600x1000x24')
+    print((root/'rules/rule-editor-evidence.json').read_text(),flush=True)
 elif args.mode == 'release':
     run('release',[binary],{'TEND_RELEASE_QA':str(root/'release')})
     print((root/'release/release-evidence.json').read_text(),flush=True)
@@ -163,3 +171,5 @@ print('Evidence:',root,flush=True)
 
 if args.mode == 'release' and not json.loads((root/'release/release-evidence.json').read_text())['interaction_target_met']:
     raise SystemExit('Native workflows completed, but the interaction latency target was not met; retained evidence contains the timings.')
+if args.mode == 'rules' and not json.loads((root/'rules/rule-editor-evidence.json').read_text())['passed']:
+    raise SystemExit('Native rule editor overwrote concurrent changes or could not reload; retained evidence contains the observed results.')

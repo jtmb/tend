@@ -135,3 +135,19 @@ See [Functional verification](../TESTING.md#expansion-release-gates) for the
 optimized whole-app reference comparison and ten-minute monitoring measurement.
 The `budget_probe.rs` and `release_qa.rs` modules are compiled only with
 `docs-demo`; neither is included in installed builds.
+
+## Recorded memory-failure regression
+
+`python3 docs/demo/design-checks.py memory --parent ../performance` replays the
+sanitized kernel JSON in `tests/fixtures/opencode-kernel-oom.jsonl`. It invokes
+the native explanation action, checks historical RAM/swap, filters logs by the
+victim PID, checks Activity categories and verifies missing-context behavior.
+It uses no allocation stress, process signals or live cleanup. Local exports,
+screenshots, input fingerprints and action coordinates remain in its private
+fixture. The fixed historical timestamp is retained for replay; these fixtures
+do not establish production journal time-range behavior.
+
+`design-checks.py rules` exercises actual dialog response buttons against
+concurrent edits, including a race during automatic-rule confirmation. It
+checks preservation, reload, a fresh save and the retained unsaved editor.
+Only fixture settings change; no actual cron job or cleanup is run.
