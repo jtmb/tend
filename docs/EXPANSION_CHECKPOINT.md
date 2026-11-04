@@ -1030,5 +1030,12 @@ the verified production build and does not change the measured release evidence.
   Tend cron block was created, no maintenance ran, and no running application
   was closed or restarted. The new interface is adopted at Tend's next ordinary
   launch.
-- Publication of the source, documentation and refreshed media is recorded
-  separately once the public check completes.
+- Publication: commit `2efcda9` was pushed to `origin/main` (previously
+  `06a6aae`) and to `origin/codex/tend-expansion`. The public repository page
+  returns HTTP 200 with the demo animation and gallery images served from
+  `/jtmb/tend/raw/main/assets/`; `demo.gif` (671,544 bytes), the five stills and
+  the icon all return HTTP 200 with image content types and byte-identical
+  SHA-256 hashes to the local assets. The published `README.md` and this
+  checkpoint also match the local files byte-for-byte. A visual browser render
+  was not captured because the optional Playwright browser runtime is not
+  installed; the check uses real HTTP responses and hash comparison.
