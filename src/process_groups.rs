@@ -248,7 +248,7 @@ pub fn applications(tasks: &[Task], boot: &str, catalog: &Catalog) -> Vec<Applic
                 memory_bytes: members
                     .iter()
                     .fold(0u64, |sum, t| sum.saturating_add(t.memory)),
-                cpu_percent: total(|t| t.cpu).map(|v| v.clamp(0., 100.)),
+                cpu_percent: total(|t| t.cpu),
                 read_bytes_per_second: total(|t| t.read_rate),
                 write_bytes_per_second: total(|t| t.write_rate),
                 members: members

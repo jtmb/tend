@@ -1039,3 +1039,37 @@ the verified production build and does not change the measured release evidence.
   checkpoint also match the local files byte-for-byte. A visual browser render
   was not captured because the optional Playwright browser runtime is not
   installed; the check uses real HTTP responses and hash comparison.
+
+## Reported bug fixes — November 4, 2026
+
+Two user-reported defects were reproduced against the deployed build, fixed and
+re-checked. The changes are local; publication is a separate step.
+
+- **Maintenance/settings saves stayed disabled.** The availability pre-check ran
+  `pkcheck` with `--detail program`, which polkit rejects for an untrusted
+  desktop caller even when the policy and helper are installed. The app now
+  verifies the installed helper and the registered
+  `io.github.jtmb.Tend.manage` action with a read-only `pkaction` lookup; the
+  save itself still performs the normal `pkexec` challenge. A native capture of
+  the Maintenance page shows the previous binary reporting "Administrator helper
+  setup is required" and the fixed binary reporting the normal saved state, with
+  no authentication prompt opened by the check.
+- **Per-process CPU looked wrong.** The collector divided each process's CPU by
+  the machine's core count (share of total capacity), and the process list
+  opened sorted by memory, so a first CPU click listed idle rows at 0.0% beside
+  a 99% whole-machine figure. Per-process CPU now uses `top`/`ps` units (100% is
+  one core; multi-core processes can exceed 100%), the process list opens sorted
+  by CPU descending, and app-group sums are no longer clamped at 100%. The
+  footer note, snapshot export header and user guide describe the unit. A new
+  unit test pins 200 ticks over two seconds at 100 Hz to 100% on a four-core
+  machine and 800 ticks to 400%.
+- Verification: `cargo check --all-targets` passes; 111 Rust tests pass (108
+  library plus three binary, one legacy destructive test ignored); 66 Python
+  tests pass; the native feature matrix passes on the current host. The
+  daily-cleanup matrix assertion now accepts the host's real readiness state
+  because the matching integration is deployed.
+- Installed locally: `~/scripts/tend` SHA-256
+  `876f1efc6cb5e48a04f625044c954eb571edda4362575a711e387588c2ba4c7d` and
+  `~/scripts/tend-worker` `3775b942d2336d2bdb841ae65921759566d84dc85052e4ba55fa89c74e50ea73`
+  with adjacent backups. The root helper is unchanged
+  (`31e8e7e1…`). No schedule, login or restart setting changed.

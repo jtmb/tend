@@ -218,7 +218,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow, location: workbench
         "title-4",
     );
     body.append(&summary);
-    body.append(&label("Associations use working directories or guarded ancestry. RSS includes shared pages. CPU is a share of total capacity over the requested two-second interval.","caption"));
+    body.append(&label("Associations use working directories or guarded ancestry. RSS includes shared pages. CPU is a share of one core over the requested two-second interval, so multi-core processes can exceed 100%.","caption"));
     let inspect_controls = workbench::buttons(&body);
     let refresh = gtk::Button::with_label("Refresh project activity");
     let inspect = gtk::Button::with_label("Inspect Compose labels");

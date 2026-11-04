@@ -420,7 +420,19 @@ fn design_initial_checks(outer: &gtk::Box, stack: &gtk::Stack) {
         .find_map(|w| w.downcast::<gtk::DropDown>().ok())
         .unwrap();
     assert_eq!(mode.selected(), 0, "Default cron must display as Daily");
-    assert!(text(&page(stack, "daily-cleanup")).contains("System integration update required"));
+    // This page reports the host's real integration readiness, so the check
+    // must hold both before deployment and on a host with the current markers.
+    let daily_page = page(stack, "daily-cleanup");
+    if tend::daily_policy::Policy::ready() {
+        assert!(
+            text(&daily_page).contains("Using effective defaults")
+                || text(&daily_page).contains("Saved · no unsaved changes"),
+            "Daily cleanup did not report its ready state: {}",
+            text(&daily_page)
+        );
+    } else {
+        assert!(text(&daily_page).contains("System integration update required"));
+    }
     assert!(text(&schedule).contains("Using effective defaults"));
     // Render saved weekly and complex expressions through the real editor.
     // These are fixture JSON files only, never installed cron jobs.

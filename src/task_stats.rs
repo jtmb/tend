@@ -56,6 +56,12 @@ pub struct Snapshot {
 pub fn rate(current: u64, previous: u64, seconds: f64) -> f64 {
     current.saturating_sub(previous) as f64 / seconds.max(0.001)
 }
+/// Per-process CPU in `top` units: 100% is one full core, and a process using
+/// several cores may exceed 100%. `cores` only bounds impossible readings after
+/// a counter reset or a very short interval.
+pub fn cpu_percent(ticks: u64, previous: u64, seconds: f64, hz: f64, cores: usize) -> f64 {
+    (rate(ticks, previous, seconds) / hz.max(1.) * 100.).clamp(0., cores as f64 * 100.)
+}
 pub fn parse_net(text: &str) -> Vec<Adapter> {
     text.lines()
         .filter_map(|line| {
@@ -126,9 +132,10 @@ pub fn collect(previous: Option<&Snapshot>) -> Snapshot {
             let start = num(19);
             let ticks = num(11) + num(12);
             let old = prior.get(&(pid, start));
-            let cpu = old.map(|p| {
-                (rate(ticks, p.ticks, elapsed) / hz / cores as f64 * 100.).clamp(0., 100.)
-            });
+            // Report CPU the way `top` and `ps` do: share of one full core, so a
+            // process using a whole core reads 100% and multi-threaded processes
+            // can exceed it. The page header remains whole-machine utilization.
+            let cpu = old.map(|p| cpu_percent(ticks, p.ticks, elapsed, hz, cores));
             let io = fs::read_to_string(entry.path().join("io")).ok();
             let io_num = |key: &str| {
                 io.as_ref()?.lines().find_map(|s| {
@@ -293,6 +300,15 @@ mod tests {
         assert_eq!((a[0].received, a[0].sent), (2048, 4096));
     }
     #[test]
+    fn per_process_cpu_uses_one_core_as_one_hundred_percent() {
+        // 200 ticks over two seconds at 100 Hz is one full core.
+        assert!((cpu_percent(200, 0, 2., 100., 4) - 100.).abs() < 1e-9);
+        // Four full cores on a four-core machine is 400%, not 100%.
+        assert!((cpu_percent(800, 0, 2., 100., 4) - 400.).abs() < 1e-9);
+        // A backwards or reset counter must not produce a negative rate.
+        assert_eq!(cpu_percent(10, 20, 2., 100., 4), 0.);
+    }
+    #[test]
     fn reset_counters_do_not_create_negative_or_huge_rates() {
         assert_eq!(rate(100, 200, 2.), 0.);
         assert_eq!(rate(4096, 2048, 2.), 1024.);
@@ -310,12 +326,13 @@ mod tests {
         assert!(me.cpu.is_none());
         std::thread::sleep(std::time::Duration::from_millis(30));
         let second = collect(Some(&first));
+        let cap = second.cores as f64 * 100.;
         assert!(second.cpu.is_some_and(|v| (0.0..=100.0).contains(&v)));
         assert!(second
             .tasks
             .iter()
             .filter_map(|t| t.cpu)
-            .all(|v| v.is_finite() && (0.0..=100.0).contains(&v)));
+            .all(|v| v.is_finite() && (0.0..=cap).contains(&v)));
         assert!(second
             .disks
             .iter()

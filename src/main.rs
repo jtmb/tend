@@ -112,10 +112,26 @@ where
     });
 }
 fn administrator_available() -> Result<(), String> {
-    // Never ask a desktop agent to authenticate. The installed rule grants this
-    // helper only; installation or missing authorization is a separate handoff.
-    tend::queries::run(Command::new("/usr/bin/pkcheck").args(["--action-id","io.github.jtmb.Tend.manage","--process",&std::process::id().to_string(),"--detail","program","/usr/local/libexec/tend-admin"]),Duration::from_secs(3),8192)
-        .map_err(|_| "Tend administrator authorization is unavailable. No password prompt was opened. Complete the documented helper setup to enable this action.".to_string())?;
+    // Never ask a desktop agent to authenticate, and never pass CheckAuthorization
+    // details from an untrusted caller: polkit rejects those even when the policy
+    // is installed. The read-only action lookup proves the policy and helper
+    // registration exist; the save itself performs the actual pkexec challenge.
+    if !std::path::Path::new("/usr/local/libexec/tend-admin").is_file() {
+        return Err(
+            "The Tend system helper is not installed. Complete the documented helper setup first."
+                .into(),
+        );
+    }
+    tend::queries::run(
+        Command::new("/usr/bin/pkaction")
+            .args(["--action-id", "io.github.jtmb.Tend.manage"]),
+        Duration::from_secs(3),
+        8192,
+    )
+    .map_err(|_| {
+        "The Tend authorization policy is unavailable. Complete the documented helper setup to enable this action."
+            .to_string()
+    })?;
     Ok(())
 }
 fn privileged(action: &str, data: Option<String>) -> Result<String, String> {

@@ -52,7 +52,7 @@ Appearance controls under **Preferences** save immediately. A write failure rest
 
 ![Task Manager performance view](../assets/task-manager.png)
 
-Processes includes name, CPU, resident memory, physical disk I/O, PID, user and state. Search by name, PID or user; click headers to sort. CPU is a share of total machine capacity. Memory includes shared pages, so adding process RSS can exceed physical RAM usage. Restricted counters display an em dash. Other users’ processes are read-only; desktop services and Tend itself are protected from termination.
+Processes includes name, CPU, resident memory, physical disk I/O, PID, user and state. Search by name, PID or user; click headers to sort. CPU follows the `top` convention: 100% is one full core, so a process using several cores can show more than 100%. Memory includes shared pages, so adding process RSS can exceed physical RAM usage. Restricted counters display an em dash. Other users’ processes are read-only; desktop services and Tend itself are protected from termination.
 
 Performance shows CPU, memory, physical-disk active time and read/write rates, and receive/send rates per network adapter. Physical network adapters appear before virtual Docker adapters. GPU usage appears only when the kernel exposes a readable utilization counter. Linux does not provide per-process network rates through these counters, so network traffic is shown per adapter. An expandable section retains paging, pressure, battery and temperature readings where available. Export explicitly saves the current resource/process snapshot locally.
 

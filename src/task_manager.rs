@@ -96,7 +96,7 @@ fn cell(column: usize, t: &Task) -> String {
         _ => t.status.clone(),
     }
 }
-const COUNTER_NOTE: &str = "CPU: share of total capacity. Memory: RSS, including shared pages. Disk I/O: physical bytes. — means unavailable or collecting.";
+const COUNTER_NOTE: &str = "CPU: share of one core, like top (a multi-core process can exceed 100%). Memory: RSS, including shared pages. Disk I/O: physical bytes. — means unavailable or collecting.";
 fn row_id(object: &glib::BoxedAnyObject) -> (u32, u64) {
     let value = object.borrow::<Task>();
     (value.pid, value.start)
@@ -664,7 +664,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
     table.set_show_row_separators(true);
     table.set_show_column_separators(true);
     table.add_css_class("data-table");
-    let mut memory_column = None;
+    let mut cpu_column = None;
     for (i, title) in ["Name", "CPU", "Memory", "Disk I/O", "PID", "User", "Status"]
         .iter()
         .enumerate()
@@ -720,12 +720,14 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             compare(i, &task(a), &task(b)).into()
         })));
         table.append_column(&col);
-        if i == 2 {
-            memory_column = Some(col);
+        if i == 1 {
+            cpu_column = Some(col);
         }
     }
     sorted.set_sorter(table.sorter().as_ref());
-    table.sort_by_column(memory_column.as_ref(), gtk::SortType::Descending);
+    // Open on the busiest processes instead of an idle, alphabetically irrelevant
+    // page of zero-percent rows. Users can still sort by any other column.
+    table.sort_by_column(cpu_column.as_ref(), gtk::SortType::Descending);
     let table_scroll = gtk::ScrolledWindow::builder()
         .child(&table)
         .hscrollbar_policy(gtk::PolicyType::Always)
@@ -1215,7 +1217,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         for t in s.traces.values() {
             text.push_str(&format!("{}\n{}\n\n", t.title, t.detail));
         }
-        text.push_str("PID\tName\tUser\tCPU (total capacity)\tMemory\tDisk I/O\n");
+        text.push_str("PID\tName\tUser\tCPU (one core)\tMemory\tDisk I/O\n");
         for t in &v.tasks {
             text.push_str(&format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\n",
