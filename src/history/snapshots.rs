@@ -1189,4 +1189,25 @@ mod tests {
             .unwrap();
         assert_eq!(pending, 0);
     }
+    #[test]
+    fn sqlite_full_preserves_the_complete_baseline_and_can_recover() {
+        let (mut store, root)=fixture();
+        fs::write(root.join("kept"),b"fixture").unwrap();
+        let first=run(&mut store,&root);
+        let pages:i64=store.db.pragma_query_value(None,"page_count",|r|r.get(0)).unwrap();
+        // SQLite's pager returns SQLITE_FULL without filling the host disk.
+        store.db.pragma_update(None,"max_page_count",pages).unwrap();
+        for n in 0..256 {fs::write(root.join(format!("{n:04}-{}","q".repeat(160))),b"").unwrap();}
+        let failure=scan_with(&mut store,&root,Arc::new(AtomicBool::new(false)),Arc::new(AtomicU64::new(0))).unwrap_err();
+        assert!(failure.to_lowercase().contains("full"),"Expected SQLITE_FULL, got {failure}");
+        let latest:i64=store.db.query_row("SELECT id FROM snapshots WHERE complete=1 ORDER BY id DESC LIMIT 1",[],|r|r.get(0)).unwrap();
+        assert_eq!(Some(latest),first.snapshot_id);
+        assert_eq!(latest_with(&store,&root).unwrap().unwrap().files,1);
+        assert!(changes_with(&store,&root,None,200).unwrap().changes.is_empty());
+        store.db.pragma_update(None,"max_page_count",100000).unwrap();
+        let recovered=run(&mut store,&root);
+        assert_eq!(recovered.baseline_id,first.snapshot_id);
+        assert_eq!(latest_with(&store,&root).unwrap().unwrap().files,257);
+        assert_eq!(fs::read(root.join("kept")).unwrap(),b"fixture");
+    }
 }

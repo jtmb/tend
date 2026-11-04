@@ -67,19 +67,19 @@ pub fn add(stack: &gtk::Stack, _win: &adw::ApplicationWindow) {
     let w60 = toggle(
         &wg,
         "One hour before",
-        "Notify 60 minutes before maintenance",
+        "",
         initial.warnings[0],
     );
     let w30 = toggle(
         &wg,
         "Thirty minutes before",
-        "Notify 30 minutes before maintenance",
+        "",
         initial.warnings[1],
     );
     let w15 = toggle(
         &wg,
         "Fifteen minutes before",
-        "Notify 15 minutes before maintenance",
+        "",
         initial.warnings[2],
     );
     p.append(&wg);

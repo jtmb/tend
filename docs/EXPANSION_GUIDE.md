@@ -56,6 +56,8 @@ metadata does not prove that a local folder owns those resources.
 
 ## Review cleanup and protect paths
 
+**Additional cleanup rules** is expandable on Disk cleanup, with a visible saved/enabled count. Open it to add, edit, remove or reload folder rules; saving a rule is separate from the page footer.
+
 **Disk cleanup** explains the selected files, eligibility, expected effects and
 estimated space before confirmation. Page through the complete selection. A
 policy edit, expired preview or changed file identity invalidates or skips the

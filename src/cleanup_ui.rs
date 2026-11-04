@@ -9,7 +9,7 @@ use std::{
 use tend::{cleanup_rules as rules, workstation as w};
 pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box {
     let p = column(10);
-    let group=adw::PreferencesGroup::builder().title("Additional cleanup rules").description("Rules save separately with Save rule. The page footer saves categories and retention. Saved rules join previews, manual cleanup and user cron jobs; files must meet their minimum age.").build();
+    let group=adw::PreferencesGroup::builder().description("Rules save separately with Save rule. The page footer saves categories and retention. Saved rules join previews, manual cleanup and user cron jobs; files must meet their minimum age.").build();
     let loaded = match rules::Policy::load() {
         Ok(p) => p,
         Err(e) => {
@@ -39,9 +39,18 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
     p.append(&list);
     p.reorder_child_after(&bar, Some(&list));
     p.append(&status);
+    let summary=label("","caption");
+    summary.set_widget_name("cleanup-rules-summary");
+    let disclosure=gtk::Expander::builder().label("Additional cleanup rules").child(&p).build();
+    disclosure.set_widget_name("cleanup-folder-rules");
+    crate::editor::guard_expanders(&disclosure);
+    let section=column(6);
+    section.append(&disclosure);
+    section.append(&summary);
     let rebuild: Rc<dyn Fn()> = Rc::new({
         let list = list.clone();
         let policy = policy.clone();
+        let summary=summary.clone();
         move || {
             while let Some(c) = list.first_child() {
                 list.remove(&c);
@@ -67,6 +76,8 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
                 ));
                 list.append(&r);
             }
+            let policy=policy.borrow();
+            summary.set_text(&format!("{} saved rule{} · {} enabled",policy.rules.len(),if policy.rules.len()==1{""}else{"s"},policy.rules.iter().filter(|r|r.enabled).count()));
         }
     });
     rebuild();
@@ -350,7 +361,7 @@ pub fn section(win: &adw::ApplicationWindow, changed: Rc<dyn Fn()>) -> gtk::Box 
             Err(e) => {changed();status.add_css_class("error");status.set_text(&format!("Rule not removed: {e} Reload rules and review again."));},
         }
     });
-    p
+    section
 }
 pub fn schedule_page(stack: &gtk::Stack) {
     let p=page("Cleanup schedule","User cron jobs run the saved manual cleanup policy and folder rules. APT stays with daily maintenance. These jobs never update packages or restart the machine.");

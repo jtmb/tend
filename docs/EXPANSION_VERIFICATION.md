@@ -22,51 +22,52 @@ installation or a guarantee about external package repositories/desktop hosts.
 
 ## Shared gates
 
-- **Interaction:** the earlier candidate passes 63 real navigation/filter
-  callbacks to first painted feedback; worst 90.711 ms under Xvfb/Cairo. All
-  seventeen pages have narrow/wide captures and keyboard-focus checks. The
-  1,000-event journal fixture verifies 25-event pages, selection mapping, export
-  of all matches and preservation of a later filter's status. Neither external
-  query completion nor physical GPU latency is measured by this result. The
-  later low-priority repeat completes functional checks but misses the latency
-  target (worst 2266.105 ms); its normal desktop-priority repeat also fails
-  (1957.126 ms). The newer optimized first-paint/collector-priority artifact
-  completes all functional checks but still fails on Disk cleanup (111.186 ms)
-  and Maintenance (109.361 ms); the other 61 observations are below 100 ms.
-  Its run-queue counters show 33.865 and 30.395 ms of waiting on those actions;
-  this is evidence of contention, not an exemption from the gate. Native expansion
-  checks pass stable selection, complete staged population, process links through
-  excluding searches, automatic sampling after paint, cancellation before paint
-  and Quit during population; they are not latency evidence.
-- **Error boundaries:** 97 Rust tests passed, one legacy fixture-deletion test
-  intentionally ignored; 63 Python tests passed with no skips. Review their
-  scope in TESTING.md. No real cleanup, updates, process termination, cron save,
-  authentication change or restart is performed by these release checks.
-- **Resources:** the optimized reference comparison and ten-minute default-monitoring
-  measurement pass: +10.95 MiB peak RSS over reference and 0.0467% of one core
-  over 600 seconds, with verified collection stop. See [the measurements](PERFORMANCE.md)
-  for binary hashes, scope and exclusions.
-  A separate retained pre-rendering-fix repeat also passes (+6.891 MiB,
-  0.043305% of one core over 600.388 seconds); neither result proves the latest
-  artifact's resource use. Final exact-artifact reconciliation is pending.
-  The retained retention-source build also passes all nine gates (168.16 MiB
-  enabled peak, 0.04330% of one core over 600.407 seconds). The newer first-paint
-  lifecycle and lower collector-thread priority still need their own resource
-  reconciliation. Both the Linux unit contract and read-only inspection of the
+- **Interaction:** the current optimized candidate
+  `tend-selection-hint-0.3.0-docs` passes **65** actual native interactions,
+  worst **84.769 ms**, under Xvfb/Cairo. This covers three visits to each of the
+  seventeen pages, small/1,000-event journal filtering, and opening/closing the
+  visible folder-rule disclosure (29.116 / 14.709 ms). First feedback is
+  36.866 ms for Task Manager and 58.308 ms for Diagnostics; Disk cleanup is
+  84.769 ms on its first visit and 37.242 ms when revisited. A separate
+  functional workflow records first actual process rows at 132.114 ms and all
+  301 sampled rows at 1245.162 ms, verifies waiting state before data, identity
+  and selection retention, clears stale details when filtering removes the
+  selection, and cancels sampling when leaving before paint. First feedback is
+  not data-collection completion or physical GPU latency. Earlier failures and
+  the three blocked builds remain in the chronological checkpoint; their gates
+  were not weakened to obtain this result.
+- **Error boundaries:** the previous artifact's checkpoint records 109 Rust tests
+  (106 library plus three binary) and 63 Python tests, one legacy
+  fixture-deletion test intentionally ignored. The current tree passes **110
+  Rust tests** (107 library plus three binary) and **66 Python tests** with no
+  skips; the added Rust contract injects `SQLITE_FULL` privately rather than
+  filling the host filesystem. Python fixtures must live on a filesystem with
+  at least 2 GiB free because the production history guard correctly refuses
+  writes below that. Review their scope in TESTING.md. No real cleanup, updates,
+  process termination, cron save, authentication change or restart is performed
+  by these release checks.
+- **Resources:** the current candidate passes all nine gates: 168.48 MiB enabled
+  peak RSS versus 169.54 MiB reference, and 0.026663% of one core over 600.075
+  seconds, with verified collection stop and zero subscriptions. See
+  [the measurements](PERFORMANCE.md) for the artifact hash, scope and
+  exclusions. Both the Linux unit contract and read-only inspection of the
   optimized native preview verify the GUI priority is unchanged while its
   collector runs at a lower priority.
-- **Appearance/accessibility:** light/dark, high contrast, large text and
-  200% scale checks cover all 17 pages (102 captures) and 174 dialog captures.
-  All 324 measured dialog footer actions are within their window bounds.
-  The 132 settings-review captures were repeated with preview-local reduced
-  motion after finding transition frames; all six settled contact sheets were
-  visually reviewed. Keyboard-focus checks
-  alone do not establish every screen reader or desktop integration.
-- **Delivery:** integration dry run passes. The installed legacy helper fails
-  the new read-only compatibility preflight as intended. Installation must use
-  matching backed-up components; authorization policy must not be broadened.
-  Local README/demo rendering passes. Public-page animation verification,
-  deployment and publication remain pending.
+- **Appearance/accessibility:** fresh light/dark, high contrast, large text and
+  200% scale captures cover all 17 pages (102 images) for this artifact, and a
+  repeated six-variant dialog sweep adds 174 dialog captures for cleanup,
+  settings-bundle and health workflows. The earlier checkpoint's 324
+  footer-bound checks remain evidence for that source; their inspection was not
+  repeated in this sweep. Keyboard-focus checks alone do not establish every
+  screen reader or desktop integration.
+- **Delivery:** matching production `tend`, `tend-worker` and `tend-admin`
+  binaries were built from this tree and installed. The root integration was
+  deployed through the documented administrator path with adjacent backups and
+  a rollback manifest; the user interface/worker followed with no password. All
+  fifteen protected schedule/login/restart fingerprints match the baseline. No
+  authorization policy was broadened. README stills and the demo GIF were
+  refreshed from this artifact and reviewed; the public README check follows
+  publication.
 
 Latest fixture locations and authoritative logs are recorded in
 [the chronological checkpoint](EXPANSION_CHECKPOINT.md). The

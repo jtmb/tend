@@ -286,6 +286,34 @@ pub fn run(
         severity.set_selected(0);
         button(&logs, "Load logs").emit_clicked();
         until(|| text(&logs).contains("6 matching events"));
+        fs::write(directory.join("navigation-feedback.json"),serde_json::to_vec_pretty(&observations).unwrap()).unwrap();
+        // A disclosure must not merely move slow first paint into its toggle.
+        stack.set_visible_child_name("cleanup");
+        wait(Duration::from_millis(250));
+        let cleanup=stack.child_by_name("cleanup").unwrap();
+        let folder_rules=descendants(&cleanup).into_iter().find(|w|w.widget_name()=="cleanup-folder-rules").unwrap().downcast::<gtk::Expander>().unwrap();
+        let rule_summary=descendants(&cleanup).into_iter().find(|w|w.widget_name()=="cleanup-rules-summary").unwrap().downcast::<gtk::Label>().unwrap();
+        assert!(!folder_rules.is_expanded());
+        assert!(!folder_rules.child().unwrap().is_child_visible());
+        assert_eq!(rule_summary.text(),"1 saved rule · 1 enabled");
+        let add_rule=button(&folder_rules.child().unwrap(),"Add rule…");
+        if let Some(scroll)=folder_rules.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>() {
+            if let Some(bounds)=folder_rules.compute_bounds(&scroll){let a=scroll.vadjustment();a.set_value((a.value()+bounds.y() as f64-80.).max(0.));}
+        }
+        wait(Duration::from_millis(250));
+        let bounds=folder_rules.compute_bounds(&outer).unwrap();
+        assert!(bounds.y()>=0.&&bounds.y()+bounds.height()<=outer.height() as f32,"Disclosure is outside the viewport: {bounds:?}");
+        for expanded in [true,false] {
+            phases.borrow_mut().clear();
+            *pending.borrow_mut()=Some((Instant::now(),thread_cpu_ns(),thread_queue_ns()));
+            assert!(folder_rules.activate());win.queue_draw();
+            until(||pending.borrow().is_none());
+            assert_eq!(folder_rules.is_expanded(),expanded);
+            assert_eq!(folder_rules.child().unwrap().is_child_visible(),expanded);
+            assert_eq!(add_rule.is_mapped(),expanded);
+            observations.push(json!({"action":"folder-rule-disclosure","expanded":expanded,"first_painted_feedback_ms":latency.borrow().last().unwrap(),"feedback_details":feedback_details.borrow().last().unwrap()}));
+            wait(Duration::from_millis(150));
+        }
         clock.disconnect(signal);
         for id in [before, layout, paint] { clock.disconnect(id); }
         fs::write(
@@ -410,6 +438,18 @@ pub fn run(
                 captures.push(json!({"page":id,"width":outer.width(),"keyboard_targets":focused.len(),"image":path}));
             }
         }
+        for width in [720,1100] {
+            win.set_default_size(width,820);stack.set_visible_child_name("cleanup");folder_rules.set_expanded(true);wait(Duration::from_millis(250));
+            if let Some(scroll)=folder_rules.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>() {
+                if let Some(bounds)=folder_rules.compute_bounds(&scroll){let a=scroll.vadjustment();a.set_value((a.value()+bounds.y() as f64-24.).max(0.));}
+            }
+            wait(Duration::from_millis(250));
+            let path=directory.join(format!("cleanup-rules-{width}.png"));
+            let shot=gtk::Snapshot::new();let paint=gtk::WidgetPaintable::new(Some(&outer));let scale=outer.scale_factor() as f32;shot.scale(scale,scale);paint.snapshot(&shot,outer.width() as f64,outer.height() as f64);
+            win.renderer().unwrap().render_texture(shot.to_node().as_ref().unwrap(),None).save_to_png(&path).unwrap();
+            crate::docs_demo::validate_capture(&outer,&stack,path.to_str().unwrap());
+        }
+        folder_rules.set_expanded(false);
         let settings = gtk::Settings::default().unwrap();
         let worst = latency.borrow().iter().copied().fold(0., f64::max);
         let report = json!({"scope":"Real native navigation/filter callbacks to first painted feedback, not completion of animations or external queries; Xvfb/Cairo", "timings":observations,"worst_first_feedback_ms":worst,"interaction_target_ms":100,"interaction_target_met":worst<100.,"captures":captures,"cleanup_retention":retention_checks,"scale":outer.scale_factor(),"text_dpi":settings.property::<i32>("gtk-xft-dpi"),"high_contrast":adw::StyleManager::default().is_high_contrast(),"virtualized_journal_records":1000,"materialized_log_rows":materialized,"filtered_selection_mapping":true,"journal_page_navigation":true,"paged_export_all_matches":true,"export_preserves_later_filter_status":true,"fixture_only":true});

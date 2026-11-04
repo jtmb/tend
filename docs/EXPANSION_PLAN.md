@@ -4,20 +4,23 @@ Goal: deliver all twelve approved features in tested phases, preserving Rust/GTK
 bounded resources and local data. No restarts, application closures, new jobs,
 or restart/login/authentication policy changes during implementation or delivery.
 
-## Planning checkpoint — October 28, 2026
+## Implementation checkpoint — November 2, 2026
 
-The existing tracked goal remains active. This plan covers all twelve features.
-All seven phases now have source implementations, with recorded unit, native
-workflow and isolated contract checks. Earlier optimized binaries pass the
-background CPU/RAM budgets, and the page/dialog geometry matrix passes. The
-interaction-latency gate is unresolved: earlier optimized repeats fail, and the
-latest rendering/date-cache fixes still require optimized verification. Those
-earlier resource measurements do not establish the latest binary's result.
-Final artifact reconciliation, integration deployment and publication
-remain outstanding; this is not a completed expansion release. Existing source work must
-meet the same gates as new work. This planning refresh changes documentation
-only. It does not install binaries, change schedules, close applications or
-schedule/trigger restarts. Detailed evidence remains in EXPANSION_CHECKPOINT.md.
+The existing tracked goal remains active and covers all twelve features. All
+seven phases have source implementations and recorded core/native/isolated
+contract checks. The current optimized candidate passes all 65 measured native
+interactions, worst 84.769 ms; those include opening and closing folder rules.
+Task Manager first feedback is 36.866 ms, and a separate functional check loads
+all 301 sampled processes (first actual rows 132.114 ms; complete 1245.162 ms).
+First feedback is not presented as completion of data collection.
+
+The exact candidate's ten-minute resource comparison passes all nine gates. Earlier
+passing resource measurements apply only to their recorded artifacts. Remaining
+visual/dialog variants, matching production integration, backed-up user
+installation, README demo refresh and publication remain outstanding.
+No existing app, maintenance schedule, restart/login/authentication policy or
+installed component is changed during these verification runs. Detailed evidence
+remains in EXPANSION_CHECKPOINT.md.
 
 ## Agreed defaults
 
@@ -40,7 +43,7 @@ schedule/trigger restarts. Detailed evidence remains in EXPANSION_CHECKPOINT.md.
 | 4 — Cleanup protection | Typed explained plans; global exclusions in manual/cron/daily paths; skip incompatible bulk operations; preview invalidation; matching helper/worker/adapter capabilities. | Typed plans, paged explanations and a shared editor implemented. Rust, Python, native cleanup/expansion, visual matrix and isolated integration contracts pass. Matching production deployment and final resource/accessibility gates remain pending. |
 | 5 — History | Maintenance phase outcomes/duration/retries/catch-up/net-space observations; incident timeline across crashes, updates, maintenance and recorded pressure; no invented legacy history or causal claims. | Bounded durable phase receipts, private reports and native paginated timeline implemented. Rust/native/sandbox checks pass. The latest settings-transfer checkpoint records the repaired notification dispatch contract and separate private-bus protocol checks. Matching deployment and final resource/accessibility gates remain pending. |
 | 6 — Alerts and panel | Optional15s cheap hidden monitoring; bounded optional crash reads; configurable alert hold/cooldown/snooze/recovery; fresh/paused panel summary and non-destructive shortcuts. | Opt-in shared monitoring, native editor, bounded optional crash reads, alert state machine and live panel implemented. Rust/native/private-bus/panel/visual/contract checks pass. Optimized ten-minute whole-app budgets and page/dialog geometry pass; final settled visual review remains in phase 7. |
-| 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | Settings bundles, ten review sections and inactive drafts have native/contract coverage. Earlier optimized builds pass background resource budgets; later interaction repeats fail even at normal priority. The latest rendering fixes need optimized latency/resource verification. The seventeen-page accessibility matrix, 174 dialog captures, settled visual review and local working README demo pass for their recorded checkpoints. Final artifact reconciliation, matching deployment and publication remain outstanding. |
+| 7 — Portability and release | Versioned settings bundles with per-section draft review; all twelve features integrated; complete native/contract/a11y/performance tests; docs/demo; backed-up user install and publication. | Settings bundles, ten review sections and inactive drafts have native/contract coverage. The latest optimized candidate passes all 65 native interaction measurements; its exact resource reconciliation passes all nine gates. Earlier failures remain documented. The seventeen-page accessibility matrix, 174 dialog captures, settled visual review and local working README demo pass for their recorded checkpoints. Final artifact reconciliation, matching deployment and publication remain outstanding. |
 
 ### Memory-failure acceptance case — October 28, 2026
 
@@ -54,41 +57,50 @@ tracked goal remains active; this case adds no restart or background job.
 
 ### Current checkpoint and next execution order
 
-The ledger records implementation evidence, not completion of a release. Source
-checkpoints `df410c4` and `2f698ae` include stable process-row reuse, paced
-population, visible-view rendering, log date-cache invalidation at Toronto
-midnight and compact editable retention disclosures. The latter optimized build
-passes all nine ten-minute resource gates, but two of its 63 interaction
-observations still exceed 100 ms (worst 127.686 ms). Newer first-paint lifecycle
-and collector-thread-priority changes pass 97 Rust tests and optimized native
-workflows, including automatic sampling and cancellation before paint. Their
-optimized interaction repeat still misses the target on Disk cleanup (111.186 ms)
-and Maintenance (109.361 ms), with the other 61 observations passing. Final
-resource/accessibility/demo reconciliation and delivery remain pending. Earlier
-passing resource or interaction runs do not establish the latest source's result.
+The ledger records evidence, not completion of a release. The frozen optimized
+candidate is now `tend-selection-hint-0.3.0-docs`, SHA-256
+`e2dc3939f7737f8c57a832a1d359982b6854f49b4e3d6c0ae63cd57afbd848a7`.
+The current source passes 110 Rust tests (107 library plus three binary, one
+legacy destructive test ignored) and 66 Python tests, plus native expansion and
+stale-rule regressions. Its production changes preserve every rule/retention control,
+remove repeated notification text, show a truthful waiting state until real
+process rows arrive, and clear stale process details when filtering removes the
+selection. A new private SQLITE_FULL test preserves the complete storage
+baseline and verifies recovery, without filling the host filesystem.
 
-1. Freeze the current source; run the full Rust checks and build an immutable
-   optimized candidate. Retain its hash and exact test scope.
-2. Repeat real native workflows and callback-to-paint measurements at normal
-   application priority. Fix demonstrated failures, then repeat affected checks.
-   Do not label a process exit or a responsive loading indicator as completion
-   of an asynchronous operation.
-3. Measure the exact candidate's ten-minute background CPU/RAM/collector-stop
-   budgets without compiling alongside it. Preserve failed and passing results.
-4. Reconcile accessibility, matching helper/worker capabilities and all twelve
-   feature checks against the final artifacts. Exercise privileged/destructive
-   contracts only with isolated fixtures, never live cleanup or updates.
-5. Update the evidence, guide and real-workflow README demo; prepare backed-up
-   matching installation artifacts. Deploy only through existing authorization,
-   without password storage, prompts or authorization-policy changes. If access
-   prevents deployment, record it as pending rather than claiming completion.
-6. Publish the tested source/docs and verify the public README animation. The
-   running app adopts a delivered binary at its next ordinary launch; do not
-   close apps, create jobs, schedule or trigger a restart for delivery.
+1. **Done:** freeze the optimized candidate; verify core tests, complete native
+   process/diagnostic/storage/workspace workflows, rule races, all 17 pages,
+   keyboard traversal, and the 65-observation interaction target (worst
+   84.769 ms). Preserve earlier failed measurements alongside this passing run.
+2. **Done:** compare this exact candidate against the retained reference for
+   hidden idle memory and ten-minute enabled CPU/RAM/collector-stop budgets;
+   all nine gates pass. Do not compile or run rendering suites alongside that
+   measurement.
+3. **Done:** the twelve feature workflows, page accessibility matrix, 174
+   six-variant dialog captures and matching production builds pass. The isolated
+   installer contracts pass, and the narrow integration dry run reports all ten
+   destinations without changing anything or requesting authentication.
+4. **Done:** the guide and README media are refreshed from this artifact and
+   the dry run was reviewed. The six-variant dialog sweep, 174 captures, and the
+   deployment preflight all pass.
+5. **Done:** the matching system integration was installed through the
+   documented administrator path with backups and a rollback manifest, followed
+   by the user interface/worker from the verified binaries. Protected schedule,
+   login and restart fingerprints are unchanged; no app was closed.
+6. **In progress:** publish the tested source/docs/binaries and verify the
+   public README animation. Running Tend adopts the delivered binary at its next
+   ordinary launch; no apps are closed, no jobs or schedules are created, and no
+   restart is triggered.
 
-This planning request edits documentation only. The existing unbudgeted goal is
-already active and remains the single tracker; it is not duplicated or marked
-complete. Future implementation follows the phases and release gates below.
+The existing unbudgeted goal remains the single tracker. Earlier passing runs
+are retained evidence for their own scopes, not substitutes for these gates.
+
+On November 2, 2026 the current tree passed `cargo check --all-targets`, 110
+Rust tests and 66 Python tests. Two guarded optimized builds were deferred and
+one was killed by systemd-oomd under host-wide memory pressure; a later attempt
+completed in 5m25s and produced the candidate above, whose interaction,
+feature, page-accessibility and resource checks then passed. Steps 4–6 remain
+pending; see the latest checkpoint entry for the exact scope.
 
 ## Phased delivery plan
 

@@ -12,6 +12,7 @@ use tend::{
     task_stats::{Snapshot, Task},
     workstation as w,
 };
+const PROCESS_HINT: &str = "Select a process for details. Other users’ processes are read-only.";
 #[derive(Clone, Default)]
 struct Trace {
     points: VecDeque<(f64, f64)>,
@@ -566,6 +567,7 @@ impl Ui {
         } else {
             self.quit.set_sensitive(false);
             self.end.set_sensitive(false);
+            self.info.set_text(PROCESS_HINT);
         }
     }
     fn paint(&self, state: &State) {
@@ -734,11 +736,29 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
         .min_content_height(240)
         .build();
     table_scroll.add_css_class("card");
-    process.append(&table_scroll);
-    let info = label(
-        "Select a process for details. Other users’ processes are read-only.",
-        "caption",
-    );
+    // An empty ColumnView's first layout is expensive and conveys no data.
+    // Show an honest waiting state until real rows arrive; collection still
+    // begins after paint and the staged population retains every process.
+    let waiting=column(8);
+    waiting.set_valign(gtk::Align::Center);
+    let waiting_title=label("Waiting for process data","heading");
+    waiting_title.set_halign(gtk::Align::Center);
+    waiting.append(&waiting_title);
+    let hint=label("Live rows appear after a snapshot. Use Refresh if monitoring is paused.","caption");
+    hint.set_halign(gtk::Align::Center);hint.set_justify(gtk::Justification::Center);
+    hint.set_max_width_chars(48);waiting.append(&hint);
+    let process_results=gtk::Stack::builder().vexpand(true).hexpand(true).hhomogeneous(false).vhomogeneous(false).height_request(240).build();
+    process_results.set_widget_name("process-results-state");
+    process_results.add_named(&waiting,Some("waiting"));
+    process_results.add_named(&table_scroll,Some("rows"));
+    process_results.set_visible_child_name("waiting");
+    let target=process_results.downgrade();
+    store.connect_items_changed(move|model,_,_,_|{
+        if let Some(target)=target.upgrade(){target.set_visible_child_name(if model.n_items()==0{"waiting"}else{"rows"});}
+    });
+    process.append(&process_results);
+    let info = label(PROCESS_HINT,"caption");
+    info.set_widget_name("process-selection-details");
     process.append(&info);
     let only = gtk::CheckButton::with_label("Only my processes");
     process.append(&only);
@@ -1127,6 +1147,7 @@ pub fn add(stack: &gtk::Stack, win: &adw::ApplicationWindow) {
             if data.borrow().previous.is_none() {
                 ui.summary.set_text("Collecting live counters…");
                 ui.status.set_text("Collecting a fresh snapshot…");
+                ui.info.set_text(PROCESS_HINT);
             }
             let (data, ui, source) = (data.clone(), ui.clone(), source.clone());
             let failed = ui.clone();

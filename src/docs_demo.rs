@@ -72,6 +72,11 @@ fn open_cleanup_retention(root: &impl IsA<Widget>) {
     expander.set_expanded(true);
     assert!(expander.child().unwrap().is_child_visible());
 }
+fn open_folder_rules(root:&impl IsA<Widget>){
+    let expander=descendants(root).into_iter().find(|w|w.widget_name()=="cleanup-folder-rules").unwrap().downcast::<gtk::Expander>().unwrap();
+    expander.set_expanded(true);
+    assert!(expander.child().unwrap().is_child_visible());
+}
 fn bottom(stack: &gtk::Stack, name: &str) {
     if let Some(scroll) = descendants(&page(stack, name))
         .into_iter()
@@ -1135,8 +1140,8 @@ pub fn qa(
                 }
             } else if step == 14 {
                 assert!(
-                    !button(&storage, "Cancel scan").is_sensitive(),
-                    "Cancel scan did not return to idle state"
+                    wait_until(||!button(&storage, "Cancel scan").is_sensitive(),Duration::from_secs(15)),
+                    "Cancel scan did not return to idle state: {}",text(&storage)
                 );
                 let report = descendants(&storage)
                     .into_iter()
@@ -1170,6 +1175,10 @@ pub fn qa(
                     .downcast::<gtk::ScrolledWindow>()
                     .unwrap();
                 let adjustment = table_scroll.hadjustment();
+                // Paused/cold views now show a waiting state. Exercise Refresh
+                // and await real mapped rows before checking table geometry.
+                refresh(&stack);
+                assert!(wait_until(||table_scroll.is_mapped()&&adjustment.upper()>adjustment.page_size(),Duration::from_secs(15)),"Process rows/scrolling did not become available: {}",text(&task));
                 assert_eq!(
                     table_scroll.hscrollbar_policy(),
                     gtk::PolicyType::Always,
@@ -1183,6 +1192,7 @@ pub fn qa(
                 evidence.push(json!({"narrow_process_table_horizontal_adjustment_reveals_status":true,"scroll_upper":adjustment.upper(),"scroll_page":adjustment.page_size()}));
                 let rules = page(&stack, "cleanup");
                 stack.set_visible_child_name("cleanup");
+                open_folder_rules(&rules);
                 fs::create_dir_all(home.join("qa-rule-cache")).unwrap();
                 button(&rules, "Add rule…").emit_clicked();
                 evidence.push(json!({"folder_rule_add_dialog_opened":true}));
@@ -1583,6 +1593,7 @@ pub fn qa(
                             button(&root, "Save changes").emit_clicked();
                         }
                         1 => {
+                            open_folder_rules(&root);
                             button(&root, "Add rule…").emit_clicked();
                         }
                         2 => {
@@ -2184,21 +2195,27 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         button(&workspace,"Remove from draft").emit_clicked();button(&workspace,"Save changes").emit_clicked();assert!(wait_until(||text(&workspace).contains("Workspace settings saved"),Duration::from_secs(15)));assert!(tend::workspaces::Settings::read().unwrap().projects.is_empty());
         evidence.push(json!({"workspace_add_edit_save_discard_remove":true,"workspace_live_cwd_mapping":true,"workspace_compose_label_fixture":true,"workspace_cached_scan":true,"workspace_storage_navigation":true,"no_project_files_changed":fixture.join("beta").exists()}));
         let task=page(&stack,"task-manager");
+        let process_state=descendants(&task).into_iter().find(|w|w.widget_name()=="process-results-state").unwrap().downcast::<gtk::Stack>().unwrap();
         let before_page=crate::monitor::budget_stats()["collections"].as_u64().unwrap();
         stack.set_visible_child_name("task-manager");
+        assert_eq!(process_state.visible_child_name().as_deref(),Some("waiting"));
         assert_eq!(crate::monitor::budget_stats()["subscribers"].as_u64().unwrap(),0,"Sampling competed with the initial page paint");
         stack.set_visible_child_name("storage");
         wait_main_context(Duration::from_millis(150));
         assert_eq!(crate::monitor::budget_stats()["collections"].as_u64().unwrap(),before_page,"Leaving before paint still collected processes");
         assert_eq!(crate::monitor::budget_stats()["subscribers"].as_u64().unwrap(),0);
+        let population_started=std::time::Instant::now();
         stack.set_visible_child_name("task-manager");
         let process=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::ColumnView>().ok()).next().unwrap();
         assert!(wait_for_task_rows(&process.model().unwrap(),Duration::from_secs(15)));
+        let first_rows_ms=population_started.elapsed().as_secs_f64()*1000.;
+        assert_eq!(process_state.visible_child_name().as_deref(),Some("rows"));
         let tabs=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::Stack>().ok()).find(|s|s.child_by_name("apps").is_some()).unwrap();
         assert!(wait_until(||!text(&task).contains("Loading process rows…"),Duration::from_secs(15)));
         let expected=descendants(&task).into_iter().filter_map(|w|w.downcast::<gtk::Label>().ok()).map(|l|l.text().to_string()).find(|t|t.starts_with("CPU ")&&t.contains("Memory")&&t.ends_with(" processes")).unwrap();
         let total=expected.split_whitespace().rev().nth(1).unwrap().parse::<u32>().unwrap();
         assert_eq!(process.model().unwrap().n_items(),total,"Staged population omitted sampled processes");
+        let complete_rows_ms=population_started.elapsed().as_secs_f64()*1000.;
         let model=process.model().unwrap();
         let own=(0..model.n_items()).find_map(|i|{let object=model.item(i).unwrap().downcast::<glib::BoxedAnyObject>().unwrap();let own=object.borrow::<tend::task_stats::Task>().pid==std::process::id();own.then_some((i,object))}).unwrap();
         model.select_item(own.0,true);
@@ -2208,8 +2225,15 @@ pub fn expansion_qa(app:&adw::Application,win:&adw::ApplicationWindow,outer:&gtk
         let current=(0..model.n_items()).find_map(|i|{let object=model.item(i).unwrap().downcast::<glib::BoxedAnyObject>().unwrap();let own=object.borrow::<tend::task_stats::Task>().pid==std::process::id();own.then_some(object)}).unwrap();
         assert_eq!(own.1,current,"A live refresh replaced a surviving process row");
         assert_eq!(model.clone().downcast::<gtk::SingleSelection>().unwrap().selected_item().unwrap(),current.upcast::<glib::Object>(),"Live refresh lost the selected process");
-        evidence.push(json!({"complete_staged_process_population":total,"stable_live_row_objects_and_selection":true,"automatic_sampling_after_first_paint":true,"leave_before_paint_cancels_collection":true}));
-        let process_search=descendants(&tabs.child_by_name("processes").unwrap()).into_iter().find_map(|w|w.downcast::<gtk::SearchEntry>().ok()).unwrap();
+        evidence.push(json!({"complete_staged_process_population":total,"first_actual_rows_ms":first_rows_ms,"complete_actual_rows_ms":complete_rows_ms,"waiting_state_before_data":true,"stable_live_row_objects_and_selection":true,"automatic_sampling_after_first_paint":true,"leave_before_paint_cancels_collection":true}));
+        let process_search=descendants(&tabs.child_by_name("processes").unwrap()).into_iter().find_map(|w|w.downcast::<gtk::SearchEntry>().ok().filter(|e|e.placeholder_text().as_deref()==Some("Search name, PID or user"))).unwrap();
+        let info=descendants(&task).into_iter().find(|w|w.widget_name()=="process-selection-details").unwrap().downcast::<gtk::Label>().unwrap();
+        assert!(info.text().contains(&format!("PID {}",std::process::id())));
+        process_search.set_text("tend-no-match-clear-selected-details");assert!(wait_until(||model.n_items()==0,Duration::from_secs(5)));
+        assert_eq!(info.text(),"Select a process for details. Other users’ processes are read-only.");
+        assert!(!button(&task,"Request quit…").is_sensitive()&&!button(&task,"End task…").is_sensitive());
+        process_search.set_text("");assert!(wait_until(||model.n_items()>0,Duration::from_secs(5)));
+        evidence.push(json!({"filtering_out_selection_clears_stale_details":true,"no_selection_process_actions_disabled":true}));
         for name in ["apps","process-tree"] {
             tabs.set_visible_child_name(name);wait_main_context(Duration::from_millis(150));
             let root=tabs.child_by_name(name).unwrap();

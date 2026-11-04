@@ -886,3 +886,149 @@ Private records remain in the sibling
 terminal JSONL, actual Tend report, cgroup-limit probe and targeted test logs.
 The expanded candidate is not installed over the existing app. Full release
 reconciliation and the tracked feature-delivery goal remain incomplete.
+
+## Task-waiting and form-layout checkpoint — October 28, 2026
+
+Source checkpoint only; no installed binary, job, schedule, restart/login or
+authentication policy was changed.
+
+- Task Manager now shows a truthful waiting panel until mapped process rows
+  exist. The results stack switches on real model changes, so first feedback is
+  not presented as completed collection. Automatic sampling still starts only
+  after first paint and is cancelled when leaving before paint.
+- Filtering a selection out of the process list clears the old details, restores
+  the neutral hint and disables Request quit / End task. A live refresh still
+  keeps surviving row objects and selection by PID/start identity.
+- The cleanup retention fields and the additional folder-rule editor are native
+  disclosures with visible draft summaries; every setting remains editable. The
+  expander focus guard covers both, so the earlier GTK critical is not
+  reintroduced.
+- The maintenance pre-warning checkboxes no longer repeat their intervals as
+  tooltip text; the visible labels already state the interval.
+- A new private SQLITE_FULL contract pins `max_page_count` instead of filling the
+  host filesystem. It verifies the previous complete baseline survives a failed
+  scan, no false change list is published, and a later scan still recovers with
+  the original baseline ID.
+- Frozen optimized artifact `tend-task-waiting-0.3.0-docs` has SHA-256
+  `777ceafde5d5fed3ce8782b9761c2a5a7c3dccc581651cc2cd95fc4361ff0bd6`; the
+  retained `../performance/budget-artifacts/` copy and that checkpoint's
+  `target/release/tend` were byte-identical (the binary has since been rebuilt
+  for production). Its recorded checks: 109 Rust tests (106 library plus
+  three binary, one legacy fixture-deletion test ignored), 63 Python tests, 65
+  native interactions (worst 89.290 ms), 292 sampled processes with first rows
+  at 135.203 ms and completion at 930.256 ms, and all nine resource gates. Logs
+  are `tend-task-waiting-{rust,release-build,release-native,expansion,rules,
+  whole-app-budget}.log` in the sibling performance directory.
+
+### Selection-hint reconciliation — November 2, 2026
+
+- The current tree passes `cargo check --locked -j 1 --all-targets` in 32.38
+  seconds and **110 Rust tests** (107 library plus three binary; one legacy
+  fixture-deletion test ignored), including the new SQLITE_FULL contract. The
+  Python suite passes **66 tests** when fixtures are retained on the main disk.
+  A first run using `/tmp/opencode` failed one test only because the production
+  history writer correctly refused a filesystem with less than 2 GiB free; the
+  guard was not weakened and the fixture home was moved instead.
+- An unoptimized debug build first confirmed the changed widgets end to end:
+  expansion with 303 processes (first rows 185.868 ms, complete 1684.722 ms),
+  all folder-rule races, and the 17-page matrix. Fixtures:
+  `tend-workflow-vayijz5h`, `tend-workflow-u33a0r1l`, `tend-workflow-xbsiap6c`.
+- An optimized rebuild needed three guarded attempts. Two were deferred while
+  host swap was nearly exhausted; one was killed by systemd-oomd after 4m22s
+  (system memory pressure above 50% for 20 seconds, build peak 797 MiB inside
+  its own 1 GiB cap). None of those was a passing build. The next attempt
+  completed in 5m25s and produced **`tend-selection-hint-0.3.0-docs`**, SHA-256
+  `e2dc3939f7737f8c57a832a1d359982b6854f49b4e3d6c0ae63cd57afbd848a7`
+  (4,706,904 bytes), also retained under `../performance/budget-artifacts/`.
+- Native release workflow: 65 interactions, worst **84.769 ms** on the first
+  Disk cleanup visit (37.242 ms on its revisit); Task Manager 36.866 ms,
+  Diagnostics 58.308 ms, folder-rule open/close 29.116/14.709 ms. It records 34
+  page captures plus four expanded retention captures, keyboard traversal, the
+  1,000-record journal checks and the interaction gate as met, then exits zero.
+  Fixture: `tend-workflow-6d23o73a`.
+- Native expansion workflow: 301 sampled processes, first actual rows at
+  132.114 ms and complete rows at 1245.162 ms, with waiting-state-before-data,
+  selection clearing plus disabled actions, identity/selection retention,
+  automatic after-paint sampling and Quit during population. Fixture:
+  `tend-workflow-4lu4zbx2`.
+- Native cleanup (all 206 candidates, no deletion), rules (four race cases),
+  feature matrix, settings bundles (ten sections), health on a private bus,
+  panel protocol, activity timeline and memory-postmortem workflows pass.
+  Fixtures: `tend-workflow-411brtzg`, `37or65ts`, `6hnnn9kd`, `fb2fesf4`,
+  `bjqbgwb4`, `avn9po6h`, `7sxwh1_w`.
+- Page accessibility: 102 fresh captures across the six theme/large-text/
+  high-contrast/200%-scale variants pass for this artifact. Fixture:
+  `tend-workflow-c7spk7qg`. The six-variant *dialog* sweep has not been repeated
+  for this artifact; standard-configuration cleanup, settings and health dialogs
+  pass, as fresh captures in `tend-workflow-6d23o73a` show.
+- Whole-app resource comparison passes all nine gates: reference idle peak
+  169.54 MiB over 60.073 s; candidate idle 168.48 MiB over 60.055 s and enabled
+  168.48 MiB over 600.075 s at 0.026663% of one core, with 45 shared collections,
+  45 panel layout/tooltip signals, no notification or history write, zero
+  subscribers after disabling and zero recorded major faults. The 1.05 MiB
+  difference from the reference is an observation of this pair, not guaranteed
+  savings. Fixtures: `tend-workflow-wpu9ijc5` (reference) and
+  `tend-workflow-ffy4s4bq` (candidate).
+- Logs: `tend-release-reconcile-{rust,python2}.log`,
+  `tend-release-current-{build2,release-native,expansion-opt,cleanup-opt,
+  accessibility-opt,bundles-opt,health-opt,panel-opt,activity-opt,matrix-opt,
+  memory-opt,budget}.log` in the sibling performance directory; the resource
+  report is `tend-selection-hint-whole-app-budget.json`.
+- The six-variant dialog sweep was repeated for this artifact: 18 runs across
+  cleanup, settings-bundle and health workflows (200% scale, large text and high
+  contrast, light and dark) produced 174 dialog captures with no failure.
+- Gallery and demo were refreshed from the same artifact. The five README stills
+  were regenerated and visually inspected (cleanup now shows the collapsed
+  retention/rules disclosures; adjacent `.backup.` copies are retained and
+  excluded from publication). The demo re-recorded 304 source frames into a
+  671,544-byte, 1090×820, 38-second looping GIF (101 encoded frames, SHA-256
+  `a16be661d7a8a33adfdb329b8f3425bbe13b733e577599128f5665ec6772a930`) after
+  reviewing decoded scenes; all six sample inputs kept their bytes and
+  timestamps. Fixture: `tend-workflow-ed82k0uz`.
+- Matching production components were then built from this tree without the
+  `docs-demo` feature: `tend` SHA-256
+  `5a1b528cd6678aa156189bbe4c948d2b394e8729d42afe66243c0a0fd6078089`
+  (4,133,464 bytes), `tend-worker`
+  `77f37e0aee72dbcdb8a012617e3b0b34deea0bbb974bc18bc7f294e08fd6130e`
+  (2,355,800 bytes) and `tend-admin`
+  `31e8e7e186463d1d1c5c6041ade5a18b835d39a2a9115d3c3b2d01d48e415074`
+  (2,105,816 bytes). The guarded build took 3m53s after one deferral.
+- `scripts/install-policy.py --dry-run` reports the same ten destinations as
+  the earlier checkpoint and changes nothing; no authentication was requested.
+  `scripts/install-user.py` still correctly refuses because the installed
+  integration is the legacy one, so the user interface/worker upgrade cannot
+  proceed until the matching system integration is deployed.
+- Still pending: local README rendering against the new media, deployment of
+  the matching integration (needs its own authorization and backup) and
+  publication. Nothing is installed, published or scheduled here, and no
+  restart/login/authentication policy changed.
+
+## Matching integration deployment — November 4, 2026
+
+This checkpoint records the separately authorized live deployment. It follows
+the verified production build and does not change the measured release evidence.
+
+- Preflight repeated the dry run: all ten destinations, no writes, and the
+  production hashes still matched (`tend` 5a1b528c…, `tend-worker` 77f37e0a…,
+  `tend-admin` 31e8e7e1…).
+- The root integration was installed through the documented administrator path
+  (`pkexec`, interactive desktop authentication; no password was stored and no
+  authorization policy changed). All ten destinations were written, checksums
+  verified, and the readiness markers written last. The installer produced
+  adjacent `.backup.20261104T153138.876176Z` copies and the rollback manifest
+  `/etc/tend/policy-install.20261104T153138.876176Z.json`. Installed
+  `/usr/local/libexec/tend-admin` and `tend-worker` match the production hashes
+  and report protocol 4 with the expected capabilities.
+- The user interface was then installed without any password:
+  `~/scripts/tend` (5a1b528c…) and `~/scripts/tend-worker` (77f37e0a…), with
+  displaced files kept as adjacent backups. The launcher and icons were already
+  identical. The installer confirmed the existing helper authorization was
+  unchanged.
+- All fifteen protected fingerprint hashes still match the prior baseline
+  (`../performance/tend-deploy-invariants-20261104.json`), including the user
+  crontab, maintenance timer/service, GDM login settings and restart policy. No
+  Tend cron block was created, no maintenance ran, and no running application
+  was closed or restarted. The new interface is adopted at Tend's next ordinary
+  launch.
+- Publication of the source, documentation and refreshed media is recorded
+  separately once the public check completes.

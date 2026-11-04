@@ -1,11 +1,118 @@
 # Performance verification
 
-An earlier optimized expansion candidate passes the default-monitoring resource
-gates and native interaction test below. Later optimized repeats miss the
-interaction target at both low and normal application priority. The latest
-rendering/date-cache source changes require a new optimized measurement; they
-are not established as passing by earlier results. These results describe controlled checks
-on the development machine, not every workload or physical GPU configuration.
+The latest optimized candidate passes the interaction and default
+background-monitoring gates below. These are controlled Xvfb/Cairo checks on
+the development machine, not guarantees for every workload or physical GPU.
+Matching production builds, deployment and publication remain separate release
+gates.
+
+## Current candidate — November 2, 2026
+
+Artifact: `tend-selection-hint-0.3.0-docs`, SHA-256
+`e2dc3939f7737f8c57a832a1d359982b6854f49b4e3d6c0ae63cd57afbd848a7`,
+4,706,904 bytes, built from this working tree with the `docs-demo` feature. This
+artifact includes the selection-hint fix and the added SQLITE_FULL/native
+regression checks, so the results below describe the current source rather than
+an earlier checkpoint.
+
+| Measurement | Result | Gate |
+| --- | --- | --- |
+| Native first painted feedback | Worst 84.769 ms across 65 interactions | <100 ms |
+| First Task Manager feedback | 36.866 ms | <100 ms |
+| First Disk cleanup feedback | 84.769 ms first visit, 37.242 ms on revisit | <100 ms |
+| First Diagnostics feedback | 58.308 ms | <100 ms |
+| Visible folder-rule open / close | 29.116 / 14.709 ms | <100 ms |
+| Reference hidden idle peak RSS | 169.54 MiB over 60.073 s | Same baseline workload |
+| Candidate hidden idle peak RSS | 168.48 MiB over 60.055 s | Additional ≤32 MiB |
+| Enabled hidden monitoring peak RSS | 168.48 MiB over 600.075 s | Additional ≤32 MiB |
+| Enabled CPU, one-core share | 0.026663% | <0.5% |
+| Major faults during measured intervals | 0 | Reported observation |
+
+All nine whole-app gates pass, including panel registration, zero subscriptions
+and verified collection stop. There were 45 shared collections including warmup
+plus 45 panel layout/tooltip signals; no notice or history write occurred during
+the measured run, and optional crash reads were off. No compiler or rendering
+suite ran alongside measurement. The candidate's enabled peak is 1.05 MiB below
+this reference; that is an observation of this pair, not a claim of guaranteed
+memory savings. Idle CPU stayed below the kernel counter's resolution, which is
+not the same as permanently zero.
+
+Building this artifact required three guarded attempts: two were deferred while
+host swap was nearly exhausted, and one was killed by systemd-oomd after 4m22s
+when system-wide memory pressure stayed above 50% for 20 seconds (build peak
+797 MiB, inside the guard's own 1 GiB cap). The successful build completed in
+5m25s. The blocked attempts are retained; no compiler error occurred.
+
+The same artifact passes the native workflows used for the feature checks:
+
+- Expansion: 301 sampled processes; first actual rows at 132.114 ms, complete
+  rows at 1245.162 ms. Waiting state before data, automatic sampling after
+  paint, selection clearing with disabled actions, identity/selection retention
+  and Quit during population all pass.
+- Release: 65 interactions, 34 page captures, four expanded retention captures,
+  keyboard traversal, 1,000-record journal paging/selection/export and all 206
+  fixture cleanup candidates.
+- Accessibility: 102 page captures across the six theme/large-text/high-contrast/
+  200%-scale variants pass. A repeated six-variant dialog sweep (cleanup,
+  settings-bundle and health workflows, light and dark) adds 174 dialog captures
+  with no failure.
+- Settings, health, panel, activity, memory-postmortem, rules and feature-matrix
+  workflows pass. No real cleanup, notification, schedule or process signal was
+  performed.
+
+Private evidence in the sibling performance directory:
+
+- `tend-selection-hint-whole-app-budget.json`
+- `budget-artifacts/tend-selection-hint-0.3.0-docs`
+- `tend-release-current-release-native.log`
+- `tend-release-current-expansion-opt.log`
+- `tend-release-current-cleanup-opt.log`
+- `tend-release-current-accessibility-opt.log`
+- `tend-release-current-bundles-opt.log`
+- `tend-release-current-health-opt.log`
+- `tend-release-current-panel-opt.log`
+- `tend-release-current-activity-opt.log`
+- `tend-release-current-matrix-opt.log`
+- `tend-release-current-memory-opt.log`
+- `tend-release-current-rules.log`
+- `tend-release-current-budget.log`
+
+Fixtures: `tend-workflow-wpu9ijc5` (reference), `tend-workflow-ffy4s4bq`
+(candidate resources), `tend-workflow-6d23o73a` (release),
+`tend-workflow-4lu4zbx2` (expansion), `tend-workflow-c7spk7qg` (accessibility),
+`tend-workflow-411brtzg` (cleanup) and `tend-workflow-37or65ts` (settings
+bundles).
+
+## Previous candidate — October 28, 2026
+
+Artifact: `tend-task-waiting-0.3.0-docs`, SHA-256
+`777ceafde5d5fed3ce8782b9761c2a5a7c3dccc581651cc2cd95fc4361ff0bd6`.
+It remains retained evidence for its own source checkpoint and predates the
+selection-hint fix and added checks above.
+
+| Measurement | Result | Gate |
+| --- | --- | --- |
+| Native first painted feedback | Worst 89.290 ms across 65 interactions | <100 ms |
+| First Task Manager feedback | 37.601 ms | <100 ms |
+| First Disk cleanup / Maintenance feedback | 33.736 / 32.756 ms | <100 ms |
+| Visible folder-rule open / close | 39.377 / 19.358 ms | <100 ms |
+| Reference hidden idle peak RSS | 172.61 MiB over 60.058 s | Same baseline workload |
+| Candidate hidden idle peak RSS | 169.98 MiB over 60.055 s | Additional ≤32 MiB |
+| Enabled hidden monitoring peak RSS | 169.98 MiB over 600.077 s | Additional ≤32 MiB |
+| Enabled CPU, one-core share | 0.043328% | <0.5% |
+| Major faults during measured intervals | 0 | Reported observation |
+
+A separate native functional workflow loads all 292 sampled processes: first
+actual rows at 135.203 ms and complete rows at 930.256 ms.
+
+Private evidence: `tend-task-waiting-manifest.json`,
+`tend-task-waiting-whole-app-budget.json`,
+`tend-task-waiting-release-native.log`, `tend-task-waiting-expansion.log` and
+`tend-task-waiting-rust.log`. Fixtures: `tend-workflow-ye71265b` (latency/layout),
+`tend-workflow-y_xbyimt` (full workflows), `tend-workflow-fnrubgf8` (reference)
+and `tend-workflow-v81f4w7i` (candidate resources).
+
+Earlier measurements below remain evidence for their recorded artifacts.
 
 ## Whole application
 

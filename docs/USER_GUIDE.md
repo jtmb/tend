@@ -106,7 +106,7 @@ Implementation follows the separate [Docker build-cache pruning](https://docs.do
 
 ## Additional cleanup rules and cron
 
-Disk cleanup includes **Add rule**, **Edit selected** and **Remove selected**. Choose a specific folder, comma-separated filename patterns (`*.log,*.tmp`), minimum age and optional recursion. Cache presets cover Firefox, Chrome, Mesa shaders, uv and npm downloads. Symlinks, other filesystems, credential/configuration folders, repositories and dependency directories are excluded. Only old regular files owned by your user are eligible; directories are retained. Rules apply to the preview and manual cleanup, and are saved separately from the root maintenance policy.
+Disk cleanup includes **Add rule**, **Edit selected** and **Remove selected** inside the expandable **Additional cleanup rules** section, which shows how many rules are saved and enabled. Choose a specific folder, comma-separated filename patterns (`*.log,*.tmp`), minimum age and optional recursion. Cache presets cover Firefox, Chrome, Mesa shaders, uv and npm downloads. Symlinks, other filesystems, credential/configuration folders, repositories and dependency directories are excluded. Only old regular files owned by your user are eligible; directories are retained. Rules apply to the preview and manual cleanup, and are saved separately from the root maintenance policy.
 
 **Cleanup schedule** supports daily/weekly controls or a numeric five-field cron expression in the system timezone. It runs the saved user cleanup categories and enabled folder rules. APT remains handled by existing system maintenance. Enabling a schedule authorizes automatic deletion under that saved policy, including Trash if selected. Review the preview first.
 
